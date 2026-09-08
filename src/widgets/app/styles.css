@@ -1,0 +1,156 @@
+@import "tailwindcss";
+
+@plugin "daisyui/index.js" {
+  themes: light --default, dark --prefersdark;
+}
+
+@plugin "daisyui/theme/index.js" {
+  name: "light";
+  default: true;
+  color-scheme: light;
+  --color-base-100: #ffffff;
+  --color-base-200: #f6f5f5;
+  --color-base-300: #e6e4e4;
+  --color-base-content: #1f2937;
+  --color-primary: #004fb5;
+  --color-primary-content: #ffffff;
+  --color-secondary: #369bff;
+  --color-secondary-content: #ffffff;
+  --color-accent: #001a47;
+  --color-accent-content: #ffffff;
+  --color-neutral: #5f6769;
+  --color-neutral-content: #ffffff;
+  --color-info: #377eb8;
+  --color-info-content: #ffffff;
+  --color-success: #00b298;
+  --color-success-content: #ffffff;
+  --color-warning: #ffda47;
+  --color-warning-content: #1f2937;
+  --color-error: #ea0022;
+  --color-error-content: #ffffff;
+  --rounded-box: 0.75rem;
+  --rounded-btn: 0.5rem;
+  --rounded-badge: 1.9rem;
+  --tab-radius: 0.5rem;
+}
+
+@plugin "daisyui/theme/index.js" {
+  name: "dark";
+  prefersdark: true;
+  color-scheme: dark;
+  --color-base-100: #1c1c1e;
+  --color-base-200: #2c2c2e;
+  --color-base-300: #3a3a3c;
+  --color-base-content: #e5e5ea;
+  --color-primary: #2d7dd2;
+  --color-primary-content: #ffffff;
+  --color-secondary: #369bff;
+  --color-secondary-content: #ffffff;
+  --color-accent: #4d8fcc;
+  --color-accent-content: #ffffff;
+  --color-neutral: #5f6769;
+  --color-neutral-content: #ffffff;
+  --color-info: #377eb8;
+  --color-info-content: #ffffff;
+  --color-success: #00b298;
+  --color-success-content: #ffffff;
+  --color-warning: #ffda47;
+  --color-warning-content: #1f2937;
+  --color-error: #ea0022;
+  --color-error-content: #ffffff;
+  --rounded-box: 0.75rem;
+  --rounded-btn: 0.5rem;
+  --rounded-badge: 1.9rem;
+  --tab-radius: 0.5rem;
+}
+
+@source "./**/*.{ts,tsx}";
+
+@layer base {
+  *, ::before, ::after {
+    border-color: var(--color-base-300, currentcolor);
+  }
+
+  html {
+    min-height: 100%;
+    background: var(--color-base-200);
+  }
+
+  body {
+    min-width: 280px;
+    min-height: 100%;
+    margin: 0;
+    padding: 16px;
+    overflow-x: hidden;
+    background: var(--color-base-200);
+    color: var(--color-base-content);
+    font-family: "Titillium Web", "Segoe UI", system-ui, sans-serif;
+    font-weight: 300;
+  }
+
+  button, input, select {
+    font: inherit;
+  }
+
+  h1, h2, h3, h4 {
+    font-weight: 400;
+  }
+}
+
+/* Inline is a card in a transcript, so the document grows and the host sizes the
+   frame around it. Fullscreen is the opposite: the host fixes the box and the widget
+   has to fill it and own its own scrolling, or content runs off the bottom with no
+   way to reach it. */
+/* Scoped to widgets that actually opt in by rendering .fill-host. bridge.ts stamps
+   data-display-mode on <html> for every widget, so an unscoped rule would clip all
+   four shipping widgets: they have no inner scroller, and with overflow hidden on both
+   html and body there is nowhere for the overflow to go. Pressing Expand on the takeoff
+   table would have put every row below the fold out of reach. */
+:root[data-display-mode="fullscreen"]:has(.fill-host),
+:root[data-display-mode="fullscreen"] body:has(.fill-host) {
+  height: 100%;
+  overflow: hidden;
+}
+
+:root[data-display-mode="fullscreen"] body:has(.fill-host) {
+  padding: 0;
+}
+
+.fill-host {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  min-height: 0;
+}
+
+.fill-host > .fill-grow {
+  flex: 1;
+  min-height: 0;
+}
+
+.kamai-card {
+  background: var(--color-base-100);
+  border-radius: 0.75rem;
+  box-shadow: 0 4px 16px rgb(0 0 0 / 0.1);
+}
+
+.plan-grid {
+  background-image:
+    linear-gradient(rgb(0 79 181 / 0.08) 1px, transparent 1px),
+    linear-gradient(90deg, rgb(0 79 181 / 0.08) 1px, transparent 1px);
+  background-size: 18px 18px;
+}
+
+.canvas-stage canvas {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+.hide-scrollbar {
+  scrollbar-width: none;
+}
+
+.hide-scrollbar::-webkit-scrollbar {
+  display: none;
+}

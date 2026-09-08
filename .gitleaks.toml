@@ -1,0 +1,8 @@
+[extend]
+useDefault = true
+
+# The OpenAI Apps challenge token is served unauthenticated at
+# /.well-known/openai-apps-challenge by design. Only this exact value is allowlisted.
+[[allowlists]]
+regexTarget = "secret"
+regexes = ['''^vez7x9V4rxWJFEU0dnlIqTHRk-i_H0Bkkdj2lemfEc4$''']

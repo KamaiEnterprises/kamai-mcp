@@ -1,0 +1,51 @@
+{
+  "name": "kamai-mcp",
+  "version": "0.1.0",
+  "description": "Kamai's MCP server: tools and MCP Apps widgets for construction-blueprint projects, blueprints and takeoffs",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/KamaiEnterprises/kamai-mcp.git"
+  },
+  "homepage": "https://www.kamai.io",
+  "bugs": {
+    "url": "https://github.com/KamaiEnterprises/kamai-mcp/issues"
+  },
+  "private": true,
+  "type": "module",
+  "engines": {
+    "bun": "1.3.3",
+    "node": ">=22.12.0"
+  },
+  "scripts": {
+    "build": "bun run typecheck && bun run build:widgets",
+    "build:widgets": "node scripts/build-widgets.mjs",
+    "dev": "bun run build:widgets && bun --watch src/index.ts",
+    "start": "bun src/index.ts",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/ext-apps": "1.7.5",
+    "@modelcontextprotocol/sdk": "1.29.0",
+    "express": "5.2.1",
+    "jose": "6.2.4",
+    "zod": "4.1.13"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.2.4",
+    "@types/express": "5.0.0",
+    "@types/node": "22.10.5",
+    "@types/react": "^19.2.14",
+    "@types/react-dom": "^19.2.3",
+    "daisyui": "^5.5.19",
+    "lucide-react": "^1.14.0",
+    "react": "^19.2.5",
+    "react-dom": "^19.2.5",
+    "react-dropzone": "^15.0.0",
+    "tailwindcss": "^4.2.4",
+    "typescript": "5.7.3",
+    "vite": "^8.0.10",
+    "vitest": "^4.1.5"
+  }
+}
