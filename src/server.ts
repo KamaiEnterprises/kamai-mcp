@@ -35,6 +35,7 @@ import {
 const UI_SCHEME_PREFIX = "ui://kamai/";
 
 const WRITE = { readOnlyHint: false, destructiveHint: false, openWorldHint: false } as const;
+const DESTRUCTIVE = { readOnlyHint: false, destructiveHint: true, openWorldHint: false } as const;
 const READONLY = { readOnlyHint: true, destructiveHint: false, openWorldHint: false } as const;
 
 // Superseded by a view_* tool. Still callable by id, just not advertised — every
@@ -464,7 +465,7 @@ export function buildServer(principal: Principal): McpServer {
         description: z.string().optional(),
       },
       outputSchema: projectSummarySchema.shape,
-      annotations: WRITE,
+      annotations: DESTRUCTIVE,
     },
     async ({ project_id, name, description }) => {
       try {
@@ -525,7 +526,7 @@ export function buildServer(principal: Principal): McpServer {
         "the job; work already in progress on the Kamai side may still run to completion.",
       inputSchema: { project_id: z.string(), job_id: z.string() },
       outputSchema: jobSummarySchema.shape,
-      annotations: WRITE,
+      annotations: DESTRUCTIVE,
     },
     async ({ project_id, job_id }) => {
       try {

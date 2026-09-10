@@ -27,7 +27,7 @@
   },
   "dependencies": {
     "@modelcontextprotocol/ext-apps": "1.7.5",
-    "@modelcontextprotocol/sdk": "1.29.0",
+    "@modelcontextprotocol/sdk": "1.30.0",
     "express": "5.2.1",
     "jose": "6.2.4",
     "zod": "4.1.13"
