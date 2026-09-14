@@ -21,6 +21,7 @@
     "build": "bun run typecheck && bun run build:widgets",
     "build:widgets": "node scripts/build-widgets.mjs",
     "dev": "bun run build:widgets && bun --watch src/index.ts",
+    "local": "bun src/local.ts",
     "start": "bun src/index.ts",
     "test": "vitest run",
     "typecheck": "tsc --noEmit"

@@ -12,11 +12,20 @@ export const API_BASE_URL = trim(process.env.MCP_API_BASE_URL, "http://127.0.0.1
 
 export const MCP_PATH = "/mcp";
 
-// FastMCP derived the canonical resource by appending the endpoint path to the
-// public root, and the transport is served at both /mcp and bare root, so all
-// three forms are live audiences. Changing this set invalidates issued tokens.
+// The canonical resource a host asks a token for (RFC 8707): the transport is served at
+// both /mcp and bare root, so discovery advertises both forms.
 export const RESOURCE_URL = `${PUBLIC_URL}${MCP_PATH}`;
-export const ACCEPTED_AUDIENCES = [RESOURCE_URL, `${PUBLIC_URL}/`, PUBLIC_URL];
+
+// The audience a token must carry is the API this server adapts, not this server's own
+// address: one resource, one audience, and the same token is valid at the API directly.
+// MCP_ACCEPTED_AUDIENCES overrides the derived list, comma-separated, for a cutover.
+const configuredAudiences = (process.env.MCP_ACCEPTED_AUDIENCES ?? "")
+  .split(",")
+  .map((s) => s.trim())
+  .filter(Boolean);
+export const ACCEPTED_AUDIENCES = configuredAudiences.length
+  ? configuredAudiences
+  : [API_BASE_URL, `${API_BASE_URL}/`];
 
 export const CLOCK_SKEW_SECONDS = 60;
 
