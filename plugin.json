@@ -1,0 +1,16 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "kamai",
+  "version": "1.0.0",
+  "description": "Construction blueprint takeoff for your agent. Create projects, ingest PDF drawings, and read structured takeoff data - measured areas, lengths and counts, plus detected rooms, walls, doors and windows - straight from a conversation. Sign in with your Kamai account; no API key.",
+  "author": {
+    "name": "Kamai",
+    "email": "yakov@kamai.io",
+    "url": "https://www.kamai.io"
+  },
+  "homepage": "https://www.kamai.io/developers/mcp",
+  "repository": "https://github.com/KamaiEnterprises/kamai-mcp",
+  "license": "Apache-2.0",
+  "keywords": ["construction", "takeoff", "blueprints", "estimating", "mcp"],
+  "logo": "assets/kamai-logo.svg"
+}
