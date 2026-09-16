@@ -57,6 +57,10 @@ export class BadArgument extends Error {}
 
 export const elementSchema = z.object({
   i: z.number().describe("The element's index on the sheet. Stable within one blueprint."),
+  id: z
+    .string()
+    .nullish()
+    .describe("Blueprint-local id. Pass this to update_elements, move_elements, or create_folder. Do not show it to the user unless they ask."),
   cls: z
     .string()
     .describe("Class from Kamai's taxonomy: room, wall, door, window, opening, a fixture type, or Unclassified."),
@@ -242,6 +246,7 @@ function toElement(feature: GeometryFeature, includeGeometry: boolean): Element 
     area: feature.area ?? null,
     len: feature.len ?? null,
   };
+  if (feature.id) row.id = feature.id;
   // Omitted, not nulled, when geometry was declined: three null keys per row is pure
   // payload, and `geometry_included` already says why they are gone.
   if (includeGeometry) {
@@ -301,6 +306,11 @@ const scanCache = new Map<string, { at: number; scan: Scan }>();
  * to reach into it. */
 export function clearScanCache(): void {
   scanCache.clear();
+}
+
+/** Drop the filtered-scan copy for one caller/blueprint after a legend write. */
+export function invalidateScanCache(scope: string): void {
+  scanCache.delete(scope);
 }
 
 function cachedScan(scope: string | undefined): Scan | undefined {

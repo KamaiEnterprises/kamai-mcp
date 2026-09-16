@@ -63,6 +63,9 @@ export const projectDetailSchema = z.object({
 
 export const geometryFeatureSchema = z.object({
   i: z.number(),
+  // Blueprint-local id. Pass this to update_elements / move_elements. Nullish so a
+  // page assembled before the field existed still validates.
+  id: z.string().nullish(),
   cls: z.string(),
   name: z.string(),
   // The feature's parent group in the drawing's hierarchy — how the user organises the
@@ -163,6 +166,46 @@ export const blueprintDetailSchema = z.object({
   error_code: z.string().nullish(),
 });
 
+export const legendFolderSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  parent_id: z.string().nullish(),
+  is_root: z.boolean(),
+  color: rgbaSchema.nullish(),
+  position: z.number(),
+});
+
+export const legendPageSchema = z.object({
+  blueprint_id: z.string(),
+  project_id: z.string(),
+  project_name: z.string(),
+  folders: z.array(legendFolderSchema),
+  count: z.number(),
+});
+
+export const featurePatchResultSchema = z.object({
+  applied: z.boolean(),
+  changed: z.number(),
+  ids: z.array(z.string()),
+  fields: z.array(z.string()),
+});
+
+export const folderCreatedSchema = z.object({
+  applied: z.boolean(),
+  id: z.string().nullish(),
+  name: z.string(),
+  parent_id: z.string().nullish(),
+});
+
+export const featureMovedSchema = z.object({
+  applied: z.boolean(),
+  moved: z.number(),
+  parent_id: z.string(),
+  ids: z.array(z.string()),
+  unknown: z.array(z.string()),
+  refused: z.array(z.object({ id: z.string(), reason: z.string() })),
+});
+
 export type Rgba = z.infer<typeof rgbaSchema>;
 export type BlueprintSummary = z.infer<typeof blueprintSummarySchema>;
 export type ProjectSummary = z.infer<typeof projectSummarySchema>;
@@ -177,6 +220,11 @@ export type BlueprintLocation = z.infer<typeof blueprintLocationSchema>;
 export type TakeoffRow = z.infer<typeof takeoffRowSchema>;
 export type TakeoffPage = z.infer<typeof takeoffPageSchema>;
 export type BlueprintDetail = z.infer<typeof blueprintDetailSchema>;
+export type LegendFolder = z.infer<typeof legendFolderSchema>;
+export type LegendPage = z.infer<typeof legendPageSchema>;
+export type FeaturePatchResult = z.infer<typeof featurePatchResultSchema>;
+export type FolderCreated = z.infer<typeof folderCreatedSchema>;
+export type FeatureMoved = z.infer<typeof featureMovedSchema>;
 
 const looseBlueprintSummarySchema = z
   .object({
@@ -436,6 +484,51 @@ export const api = {
     callApi<UploadResult>(p, `/v1/uploads/${encodeURIComponent(fileUuid)}/complete`, undefined, {
       method: "POST",
     }),
+
+  listFolders: (p: Principal, projectId: string, blueprintId: string) =>
+    callApi<LegendPage>(
+      p,
+      `/v1/projects/${encodeURIComponent(projectId)}/blueprints/${encodeURIComponent(blueprintId)}/folders`,
+    ),
+
+  patchFeatures: (
+    p: Principal,
+    projectId: string,
+    blueprintId: string,
+    body: { ids: string[]; name?: string; color?: Rgba; dry_run?: boolean },
+  ) =>
+    callApi<FeaturePatchResult>(
+      p,
+      `/v1/projects/${encodeURIComponent(projectId)}/blueprints/${encodeURIComponent(blueprintId)}/features`,
+      undefined,
+      { method: "POST", body },
+    ),
+
+  createFolder: (
+    p: Principal,
+    projectId: string,
+    blueprintId: string,
+    body: { name: string; parent_id?: string; color?: Rgba; dry_run?: boolean },
+  ) =>
+    callApi<FolderCreated>(
+      p,
+      `/v1/projects/${encodeURIComponent(projectId)}/blueprints/${encodeURIComponent(blueprintId)}/folders`,
+      undefined,
+      { method: "POST", body },
+    ),
+
+  moveFeatures: (
+    p: Principal,
+    projectId: string,
+    blueprintId: string,
+    body: { ids: string[]; parent_id: string; index?: number; dry_run?: boolean },
+  ) =>
+    callApi<FeatureMoved>(
+      p,
+      `/v1/projects/${encodeURIComponent(projectId)}/blueprints/${encodeURIComponent(blueprintId)}/move`,
+      undefined,
+      { method: "POST", body },
+    ),
 
   importChatAttachment: (
     p: Principal,

@@ -8,17 +8,22 @@ import {
   api,
   blueprintDetailSchema,
   blueprintSummarySchema,
+  featureMovedSchema,
+  featurePatchResultSchema,
+  folderCreatedSchema,
   geometryPageSchema,
+  legendPageSchema,
   projectDetailSchema,
   projectSummarySchema,
   jobSummarySchema,
   resolveProject,
+  rgbaSchema,
   takeoffPageSchema,
   uploadResultSchema,
   uploadTicketSchema,
 } from "./api.ts";
 import type { Principal } from "./auth.ts";
-import { BadArgument, MAX_LIMIT, buildElementsPage, listElementsOutput } from "./elements.ts";
+import { BadArgument, MAX_LIMIT, buildElementsPage, invalidateScanCache, listElementsOutput } from "./elements.ts";
 import {
   FRAME_ORIGINS,
   UI_MIME,
@@ -122,6 +127,9 @@ export function buildServer(principal: Principal): McpServer {
       capabilities: { tools: {}, resources: {} },
     },
   );
+
+  const scanKey = (projectId: string, blueprintId: string) =>
+    `${principal.uid}\u0000${principal.token}\u0000${projectId}\u0000${blueprintId}`;
 
   // The id is load-bearing — it is in every cached ui:// URI — but the label is what a
   // host shows in a resource list, so it should read like the product, not the module.
@@ -365,6 +373,8 @@ export function buildServer(principal: Principal): McpServer {
         "shape and position, not size: quote `area` and `len` in `units` for measurements, " +
         "and never compute a measurement from the coordinates. Both are null when " +
         "`needs_scale` is true, and provisional when `scale_unconfirmed` is true.\n\n" +
+        "Each row's `id` is the stable local id for `update_elements` and `move_elements`. " +
+        "Folders are not in this list (they have no shape) — use `list_folders` for those.\n\n" +
         "Outlines are bulky, so pages are small: `limit` defaults to 50 and is held to 100 " +
         "while `include_geometry` is true. A page is also held to a size budget, so " +
         "`returned` can be smaller than `limit` — a single traced wall can carry thousands " +
@@ -421,7 +431,7 @@ export function buildServer(principal: Principal): McpServer {
             // Scope for the filtered-scan cache. The token is in the key as well as the
             // uid: the scan holds one principal's view of one blueprint, so anything that
             // could change what this caller is allowed to see must change the key.
-            `${principal.uid}\u0000${principal.token}\u0000${projectId}\u0000${blueprint_id}`,
+            scanKey(projectId, blueprint_id),
           ),
         );
       } catch (err) {
@@ -431,6 +441,156 @@ export function buildServer(principal: Principal): McpServer {
         // call. Only this module's own BadArgument gets that pass — anything else still
         // goes through fail(), which never leaks an upstream detail string.
         if (err instanceof BadArgument) throw new Error(err.message);
+        fail(err);
+      }
+    },
+  );
+
+  server.registerTool(
+    "list_folders",
+    {
+      title: "List blueprint folders",
+      description:
+        "List a blueprint's legend folders: id, name, parent, and colour. Geometry tools skip " +
+        "folders because they have no shape, so call this when the user asks to create, rename, " +
+        "recolour, or move items between folders. Pass a folder's `id` to create_folder " +
+        "(as parent_id), update_elements, or move_elements. Do not show raw ids unless the " +
+        "user asks for one. Refer to the blueprint and project by name.",
+      inputSchema: {
+        blueprint_id: z.string(),
+        project_id: z.string().optional(),
+      },
+      outputSchema: legendPageSchema.shape,
+      annotations: READONLY,
+    },
+    async ({ blueprint_id, project_id }) => {
+      try {
+        const projectId = await resolveProject(principal, blueprint_id, project_id);
+        return text(await api.listFolders(principal, projectId, blueprint_id));
+      } catch (err) {
+        fail(err);
+      }
+    },
+  );
+
+  server.registerTool(
+    "update_elements",
+    {
+      title: "Rename or recolour elements",
+      description:
+        "Rename or recolour specific elements or folders on a blueprint. Name and colour only — " +
+        "geometry cannot be changed here. Pass `ids` from list_elements or list_folders. " +
+        "Use dry_run to preview. Refer to the blueprint by name, not by id.",
+      inputSchema: {
+        blueprint_id: z.string(),
+        project_id: z.string().optional(),
+        ids: z.array(z.string()).min(1).describe("Local ids from list_elements or list_folders."),
+        name: z.string().min(1).optional().describe("New label. Omit to leave names alone."),
+        color: rgbaSchema.optional().describe("New colour, channels 0-255. Omit to leave colour alone."),
+        dry_run: z.boolean().optional().describe("Report what would change without changing it."),
+      },
+      outputSchema: featurePatchResultSchema.shape,
+      annotations: WRITE,
+    },
+    async ({ blueprint_id, project_id, ids, name, color, dry_run }) => {
+      try {
+        if (name === undefined && color === undefined) {
+          throw new BadArgument(
+            "Pass name or color. An ids-only call would change nothing.",
+          );
+        }
+        const projectId = await resolveProject(principal, blueprint_id, project_id);
+        const result = await api.patchFeatures(principal, projectId, blueprint_id, {
+          ids,
+          name,
+          color,
+          dry_run,
+        });
+        if (!dry_run) invalidateScanCache(scanKey(projectId, blueprint_id));
+        return text(result);
+      } catch (err) {
+        if (err instanceof BadArgument) throw new Error(err.message);
+        fail(err);
+      }
+    },
+  );
+
+  server.registerTool(
+    "create_folder",
+    {
+      title: "Create a legend folder",
+      description:
+        "Create a folder on a blueprint, under an existing folder or under the sheet's root. " +
+        "parent_id must be a folder from list_folders; omit it to create under the root. A " +
+        "missing or non-folder parent is refused, not guessed. Refer to the blueprint by name.",
+      inputSchema: {
+        blueprint_id: z.string(),
+        project_id: z.string().optional(),
+        name: z.string().min(1).describe("The folder's label."),
+        parent_id: z
+          .string()
+          .optional()
+          .describe("Folder id from list_folders. Omit to create under the sheet's root."),
+        color: rgbaSchema.optional().describe("Folder colour, channels 0-255."),
+        dry_run: z.boolean().optional(),
+      },
+      outputSchema: folderCreatedSchema.shape,
+      annotations: WRITE,
+    },
+    async ({ blueprint_id, project_id, name, parent_id, color, dry_run }) => {
+      try {
+        const projectId = await resolveProject(principal, blueprint_id, project_id);
+        const result = await api.createFolder(principal, projectId, blueprint_id, {
+          name,
+          parent_id,
+          color,
+          dry_run,
+        });
+        if (!dry_run) invalidateScanCache(scanKey(projectId, blueprint_id));
+        return text(result);
+      } catch (err) {
+        fail(err);
+      }
+    },
+  );
+
+  server.registerTool(
+    "move_elements",
+    {
+      title: "Move elements between folders",
+      description:
+        "Move elements or folders into a folder on the SAME blueprint. The sheet's root folder " +
+        "cannot move. A folder cannot be dropped into its own subtree. Cross-sheet moves are " +
+        "refused. Moved non-folders inherit the destination folder's colour; a moved folder " +
+        "keeps its own. Pass ids from list_elements / list_folders. Refer to the blueprint by name.",
+      inputSchema: {
+        blueprint_id: z.string(),
+        project_id: z.string().optional(),
+        ids: z.array(z.string()).min(1).describe("Local ids from list_elements or list_folders."),
+        parent_id: z.string().describe("Destination folder id from list_folders."),
+        index: z
+          .number()
+          .int()
+          .min(0)
+          .optional()
+          .describe("Insertion index among the destination's remaining children. Omit to append."),
+        dry_run: z.boolean().optional(),
+      },
+      outputSchema: featureMovedSchema.shape,
+      annotations: WRITE,
+    },
+    async ({ blueprint_id, project_id, ids, parent_id, index, dry_run }) => {
+      try {
+        const projectId = await resolveProject(principal, blueprint_id, project_id);
+        const result = await api.moveFeatures(principal, projectId, blueprint_id, {
+          ids,
+          parent_id,
+          index,
+          dry_run,
+        });
+        if (!dry_run) invalidateScanCache(scanKey(projectId, blueprint_id));
+        return text(result);
+      } catch (err) {
         fail(err);
       }
     },

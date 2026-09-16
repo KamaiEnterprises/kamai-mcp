@@ -8,6 +8,7 @@ import {
   SCAN_CACHE_TTL_MS,
   buildElementsPage,
   clearScanCache,
+  invalidateScanCache,
   type FetchGeometry,
 } from "./elements.ts";
 import type { GeometryFeature, GeometryPage } from "./api.ts";
@@ -647,6 +648,14 @@ describe("list_elements reads the blueprint once per filtered listing", () => {
     const fetcher = sheet([feature(0, { cls: "door" })]);
     await buildElementsPage(fetcher, { cls: "door" });
     await buildElementsPage(fetcher, { cls: "door" });
+    expect(fetcher.calls.length).toBe(2);
+  });
+
+  it("re-reads after a legend write drops the copy", async () => {
+    const fetcher = sheet([feature(0, { cls: "door" })]);
+    await buildElementsPage(fetcher, { cls: "door" }, scope);
+    invalidateScanCache(scope);
+    await buildElementsPage(fetcher, { cls: "door" }, scope);
     expect(fetcher.calls.length).toBe(2);
   });
 });
