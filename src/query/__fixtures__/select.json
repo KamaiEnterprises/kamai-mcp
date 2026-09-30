@@ -1,0 +1,74 @@
+{
+  "project_id": "projEvalTower",
+  "project_name": "Eval Tower",
+  "blueprints": [
+    {
+      "blueprint_id": "bpEval_a",
+      "name": "Ground Floor",
+      "units": "metric",
+      "has_scale": true
+    },
+    {
+      "blueprint_id": "bpEval_b",
+      "name": "First Floor",
+      "units": "imperial",
+      "has_scale": true
+    }
+  ],
+  "rows": [
+    {
+      "ref": "se0951e:d1",
+      "id": "d1",
+      "blueprint_id": "bpEval_a",
+      "kind": "object",
+      "class": "opening",
+      "sub_class": "single swing door",
+      "name": "Door",
+      "tag": "D1",
+      "handing": "LH",
+      "folder": "Doors",
+      "folder_path": "Doors",
+      "area": "0.40 m²",
+      "perimeter": "2.80 m",
+      "width": "100 cm wide"
+    },
+    {
+      "ref": "se0951e:d2",
+      "id": "d2",
+      "blueprint_id": "bpEval_a",
+      "kind": "object",
+      "class": "opening",
+      "sub_class": "single swing door",
+      "name": "Door",
+      "tag": "D2",
+      "folder": "Doors",
+      "folder_path": "Doors",
+      "area": "0.20 m²",
+      "perimeter": "2.40 m",
+      "width": "90 cm wide"
+    },
+    {
+      "ref": "se0951e:d3",
+      "id": "d3",
+      "blueprint_id": "bpEval_a",
+      "kind": "object",
+      "class": "opening",
+      "sub_class": "single swing door",
+      "name": "Door",
+      "tag": "D3",
+      "folder": "Doors",
+      "folder_path": "Doors",
+      "area": "0.16 m²",
+      "perimeter": "2.00 m",
+      "width": "80 cm wide"
+    }
+  ],
+  "total": 6,
+  "returned": 3,
+  "offset": 0,
+  "next_offset": 3,
+  "excluded": [],
+  "total_is_partial": false,
+  "notes": [],
+  "selection": "q1.eNo1jDsOgzAQRO8y9RZB6bbPDdKhCNnYRgaLtZZPhBB3z6agm6d5MycS-IQvW6ya57XLYQG38PW1u9I50B09PoTerXEQPcAIIrrgIkwGKc_B1AJ-EiTZ54NQragq43_-lm9UM3Zwc_0A4CclNg"
+}

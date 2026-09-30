@@ -44,6 +44,15 @@ describe("widget resource URIs", () => {
     }
   });
 
+  it("serves the table widget at the current version, with GCS allowed for the plan image", async () => {
+    const client = await connect();
+    expect(widgetUri("table")).toBe("ui://kamai/table@v28.html");
+    const result = await client.readResource({ uri: widgetUri("table") });
+    expect(textOf(result)).toContain("<!doctype html>");
+    const meta = result.contents[0]?._meta as { ui?: { csp?: { resourceDomains?: string[] } } } | undefined;
+    expect(meta?.ui?.csp?.resourceDomains).toContain("https://storage.googleapis.com");
+  });
+
   it("carries the CSP metadata on a legacy URI too", async () => {
     const client = await connect();
     const result = await client.readResource({ uri: "ui://kamai/blueprint@v10.html" });
@@ -81,5 +90,17 @@ describe("open_kamai output contract", () => {
     expect(typeof output.url).toBe("string");
     expect(typeof output.open_in).toBe("string");
     expect(Array.isArray(output.declared_frame_domains)).toBe(true);
+  });
+
+  // Open WebUI's MCP App Bridge (and any host that drops structuredContent, see
+  // ext-apps#696) only forwards content[0].text into the widget shim. Empty content
+  // leaves the panel stuck on "Loading Kamai…" with no iframe ever mounted.
+  it("emits content text that round-trips the structured payload", async () => {
+    const client = await connect();
+    const result = await client.callTool({ name: "open_kamai", arguments: {} });
+    const structured = result.structuredContent as Record<string, unknown>;
+    const block = Array.isArray(result.content) ? result.content[0] : null;
+    expect(block).toMatchObject({ type: "text" });
+    expect(JSON.parse((block as { text: string }).text)).toEqual(structured);
   });
 });

@@ -2,6 +2,27 @@ import { z } from "zod";
 
 import { API_BASE_URL } from "./config.ts";
 import type { Principal } from "./auth.ts";
+import {
+  aggregateResultSchema,
+  geometrySelectResultSchema,
+  inventoryResultSchema,
+  resolveResultSchema,
+  scaleResultSchema,
+  selectResultSchema,
+  tableResultSchema,
+  vocabularySchema,
+  wallSurfaceResultSchema,
+  type AggregateResult,
+  type GeometrySelectResult,
+  type HeightStatement,
+  type InventoryResult,
+  type ResolveResult,
+  type ScaleResult,
+  type SelectResult,
+  type TableResult,
+  type Vocabulary,
+  type WallSurfaceResult,
+} from "./query/contract.ts";
 
 // The API layer's response models are the contract, and these mirror them field for
 // field. Types are inferred from the schemas rather than declared alongside them: a
@@ -190,6 +211,21 @@ export const featurePatchResultSchema = z.object({
   fields: z.array(z.string()),
 });
 
+/** What one opening piece reports back after a tag/height write.
+ *
+ * Read back AFTER the write rather than echoed from the request: `height_units`
+ * and `height_m` are the same stored length in the two units, so a caller that
+ * sent metres can check the conversion the sheet's scale performed, and a
+ * tag-only write still learns the height already on the row. Both are nullish
+ * because a piece that has never been given a height has neither. */
+export const openingPieceAttributesSchema = z.object({
+  id: z.string(),
+  tag: z.string().nullish(),
+  height_units: z.number().nullish(),
+  height_m: z.number().nullish(),
+  feature_class: z.string(),
+});
+
 export const folderCreatedSchema = z.object({
   applied: z.boolean(),
   id: z.string().nullish(),
@@ -225,6 +261,7 @@ export type LegendPage = z.infer<typeof legendPageSchema>;
 export type FeaturePatchResult = z.infer<typeof featurePatchResultSchema>;
 export type FolderCreated = z.infer<typeof folderCreatedSchema>;
 export type FeatureMoved = z.infer<typeof featureMovedSchema>;
+export type OpeningPieceAttributes = z.infer<typeof openingPieceAttributesSchema>;
 
 const looseBlueprintSummarySchema = z
   .object({
@@ -288,19 +325,92 @@ export function parseProjectPage(value: unknown): ProjectPage {
   return { items, next_cursor: page.next_cursor };
 }
 
+// Every route this client calls, spelled once. Each `api.*` call builds its path from
+// here, and scripts/check-routes.ts asserts every entry against a live API's
+// /openapi.json: a fetch-mocked tool test passes against a route that does not exist.
+// Placeholders use the API layer's own parameter names.
+export type HttpMethod = "GET" | "POST" | "PATCH" | "PUT";
+
+export const API_ROUTES = {
+  me: { method: "GET", template: "/v1/me" },
+  listProjects: { method: "GET", template: "/v1/projects" },
+  createProject: { method: "POST", template: "/v1/projects" },
+  getProject: { method: "GET", template: "/v1/projects/{project_id}" },
+  updateProject: { method: "PATCH", template: "/v1/projects/{project_id}" },
+  listJobs: { method: "GET", template: "/v1/projects/{project_id}/jobs" },
+  getJob: { method: "GET", template: "/v1/projects/{project_id}/jobs/{job_id}" },
+  cancelJob: { method: "POST", template: "/v1/projects/{project_id}/jobs/{job_id}/cancel" },
+  getBlueprint: { method: "GET", template: "/v1/projects/{project_id}/blueprints/{blueprint_id}" },
+  getGeometry: { method: "GET", template: "/v1/projects/{project_id}/blueprints/{blueprint_id}/geometry" },
+  getTakeoff: { method: "GET", template: "/v1/projects/{project_id}/blueprints/{blueprint_id}/takeoff" },
+  listFolders: { method: "GET", template: "/v1/projects/{project_id}/blueprints/{blueprint_id}/folders" },
+  createFolder: { method: "POST", template: "/v1/projects/{project_id}/blueprints/{blueprint_id}/folders" },
+  patchFeatures: { method: "POST", template: "/v1/projects/{project_id}/blueprints/{blueprint_id}/features" },
+  moveFeatures: { method: "POST", template: "/v1/projects/{project_id}/blueprints/{blueprint_id}/move" },
+  setOpeningPieceAttributes: { method: "PATCH", template: "/v1/blueprints/{blueprint_id}/features/{feature_id}" },
+  locateBlueprint: { method: "GET", template: "/v1/blueprints/{blueprint_id}" },
+  createUpload: { method: "POST", template: "/v1/uploads" },
+  completeUpload: { method: "POST", template: "/v1/uploads/{file_uuid}/complete" },
+  importChatAttachment: { method: "POST", template: "/v1/imports/chat-attachment" },
+  getVocabulary: { method: "GET", template: "/v1/vocabulary" },
+  querySelect: { method: "POST", template: "/v1/projects/{project_id}/query/select" },
+  queryAggregate: { method: "POST", template: "/v1/projects/{project_id}/query/aggregate" },
+  queryWallSurface: { method: "POST", template: "/v1/projects/{project_id}/query/wall-surface-area" },
+  queryTable: { method: "POST", template: "/v1/projects/{project_id}/query/table" },
+  queryResolve: { method: "POST", template: "/v1/projects/{project_id}/query/resolve" },
+  getInventory: { method: "GET", template: "/v1/projects/{project_id}/inventory" },
+  setScale: { method: "PUT", template: "/v1/projects/{project_id}/blueprints/{blueprint_id}/scale" },
+  geometrySelect: {
+    method: "POST",
+    template: "/v1/projects/{project_id}/blueprints/{blueprint_id}/geometry/select",
+  },
+} as const satisfies Record<string, { method: HttpMethod; template: string }>;
+
+export type RouteName = keyof typeof API_ROUTES;
+
+/** A route's path with its placeholders filled, each value URL-encoded. A missing value is
+ * a bug in this file, not a caller mistake, so it throws rather than sending `{id}`. */
+export function routePath(route: RouteName, params: Record<string, string> = {}): string {
+  return API_ROUTES[route].template.replace(/\{([a-z_]+)\}/g, (_, name: string) => {
+    const value = params[name];
+    if (value === undefined) throw new Error(`routePath(${route}): missing ${name}`);
+    return encodeURIComponent(value);
+  });
+}
+
 // Prose the model may see. Keyed off the frozen `code` vocabulary, never off the
-// upstream detail string, which can carry internal hostnames and paths.
-const MESSAGES: Record<string, string> = {
+// upstream detail string, which can carry internal hostnames and paths. The one
+// exception is `invalid_request` on the query routes, whose detail is the backend's own
+// fix message (see errors.ts).
+//
+// forbidden and not_found say the same thing: telling "exists but not yours" apart from
+// "does not exist" is an oracle over other accounts' ids.
+const NOTHING_WITH_THAT_ID =
+  "Kamai has nothing with that id in this account. Check the id with view_projects, list_blueprints or list_jobs.";
+
+// Not in the plan remedies below: the sentence that stops a model re-trying a refusal
+// that cannot change until a person acts.
+const DO_NOT_RETRY_PLAN =
+  "Do not call this tool again until the user has changed the plan in Kamai; it will be refused the same way.";
+
+export const MESSAGES: Record<string, string> = {
   unauthenticated: "You are not signed in to Kamai.",
   // Not "your session expired": this fires for ANY downstream 401, including an audience
   // misconfiguration, where reconnecting never helps.
   invalid_token: "Kamai rejected the access token. If this persists, reconnect the connector.",
-  forbidden: "You do not have access to that.",
-  not_found: "Not found.",
+  forbidden: NOTHING_WITH_THAT_ID,
+  not_found: NOTHING_WITH_THAT_ID,
   not_ready: "That blueprint is still being processed.",
   invalid_request: "That request was not valid.",
   upstream_unavailable: "Kamai is temporarily unavailable. Try again shortly.",
   internal: "Something went wrong on the Kamai side.",
+  // A 404 with no problem body is the framework's own "no such route": the API this server
+  // talks to is older than the tool. Retrying cannot help within a conversation.
+  route_missing:
+    "This Kamai feature is not available on the server yet. Do not call it again in this conversation; tell the user it could not be done.",
+  needs_scale:
+    "This blueprint has no usable scale, so nothing on it can be measured. The scale has to be set in Kamai first.",
+  busy: "Kamai is still running this account's other queries. Wait for them to finish, then ask once more.",
   subscription_pending: "This Kamai account has no active plan yet, so blueprints cannot be uploaded.",
   subscription_expired: "The Kamai subscription has expired, so blueprints cannot be uploaded.",
   quota_exceeded: "This Kamai account has used its whole plan allowance.",
@@ -324,10 +434,10 @@ export type ProblemDetails = z.infer<typeof problemDetailsSchema>;
 // The remedy, not the diagnosis. A refusal the model cannot act on costs the user a
 // round trip: it reads as a Kamai fault rather than as something they can fix.
 const REMEDY: Record<string, string> = {
-  subscription_pending: "Use the `open_kamai` tool to open Kamai, where a plan can be chosen.",
-  subscription_expired: "Use the `open_kamai` tool to open Kamai, where the plan can be renewed.",
-  quota_exceeded: "Use the `open_kamai` tool to open Kamai, where the plan can be changed.",
-  org_quota_exceeded: "An administrator of the organization has to raise the limit.",
+  subscription_pending: `Use the \`open_kamai\` tool to open Kamai, where a plan can be chosen. ${DO_NOT_RETRY_PLAN}`,
+  subscription_expired: `Use the \`open_kamai\` tool to open Kamai, where the plan can be renewed. ${DO_NOT_RETRY_PLAN}`,
+  quota_exceeded: `Use the \`open_kamai\` tool to open Kamai, where the plan can be changed. ${DO_NOT_RETRY_PLAN}`,
+  org_quota_exceeded: `An administrator of the organization has to raise the limit. ${DO_NOT_RETRY_PLAN}`,
 };
 
 function messageFor(code: string, details: ProblemDetails): string {
@@ -352,25 +462,39 @@ function messageFor(code: string, details: ProblemDetails): string {
   return parts.join(" ");
 }
 
+// The longest backend fix message worth carrying. The validation handler caps its own
+// detail at this length; the cap here is so a misbehaving server cannot flood the model.
+const MAX_DETAIL = 600;
+
 export class ApiError extends Error {
+  /** The problem document's `detail`, trimmed. Never shown by default: see errors.ts for
+   * the routes whose detail is a fix message written for the caller. */
+  readonly detail?: string;
+  /** Which route refused, so the message can depend on it. */
+  readonly route?: RouteName;
+
   constructor(
     readonly code: string,
     readonly status: number,
     readonly details: ProblemDetails = {},
+    extra: { detail?: string; route?: RouteName } = {},
   ) {
     super(messageFor(code, details));
+    this.detail = extra.detail;
+    this.route = extra.route;
   }
 }
 
-async function callApi<T>(
-  principal: Principal,
-  path: string,
-  query?: Record<string, string | number | undefined>,
-  init?: { method: "POST" | "PATCH"; body?: unknown },
-  decode?: (value: unknown) => T,
-): Promise<T> {
-  const url = new URL(API_BASE_URL + path);
-  for (const [key, value] of Object.entries(query ?? {})) {
+type CallOptions<T> = {
+  params?: Record<string, string>;
+  query?: Record<string, string | number | undefined>;
+  body?: unknown;
+  decode?: (value: unknown) => T;
+};
+
+async function callApi<T>(principal: Principal, route: RouteName, options: CallOptions<T> = {}): Promise<T> {
+  const url = new URL(API_BASE_URL + routePath(route, options.params));
+  for (const [key, value] of Object.entries(options.query ?? {})) {
     if (value !== undefined && value !== null) url.searchParams.set(key, String(value));
   }
 
@@ -378,25 +502,29 @@ async function callApi<T>(
     authorization: `Bearer ${principal.token}`,
     accept: "application/json",
   };
-  if (init?.body !== undefined) headers["content-type"] = "application/json";
+  if (options.body !== undefined) headers["content-type"] = "application/json";
 
   let response: Response;
   try {
     response = await fetch(url, {
-      method: init?.method ?? "GET",
+      method: API_ROUTES[route].method,
       headers,
-      body: init?.body === undefined ? undefined : JSON.stringify(init.body),
+      body: options.body === undefined ? undefined : JSON.stringify(options.body),
     });
   } catch {
-    throw new ApiError("upstream_unavailable", 503);
+    throw new ApiError("upstream_unavailable", 503, {}, { route });
   }
 
   if (!response.ok) {
-    let code = "internal";
+    let code: string | null = null;
+    let detail: string | undefined;
     let details: ProblemDetails = {};
     try {
-      const body = (await response.json()) as { code?: string };
+      const body = (await response.json()) as { code?: unknown; detail?: unknown };
       if (typeof body.code === "string") code = body.code;
+      if (typeof body.detail === "string" && body.detail.trim()) {
+        detail = body.detail.trim().slice(0, MAX_DETAIL);
+      }
       // Parsed leniently: an unparseable extension member must not turn a precise
       // refusal into a generic one.
       const parsed = problemDetailsSchema.safeParse(body);
@@ -404,28 +532,55 @@ async function callApi<T>(
     } catch {
       /* non-problem body: keep the generic code */
     }
-    throw new ApiError(code, response.status, details);
+    // Every refusal of the API layer's own carries a `code`. A 404 or 405 without one is
+    // the framework saying the route itself is not there.
+    if (code === null && (response.status === 404 || response.status === 405)) code = "route_missing";
+    throw new ApiError(code ?? "internal", response.status, details, { detail, route });
   }
 
   const body = await response.json();
-  return decode ? decode(body) : (body as T);
+  return options.decode ? options.decode(body) : (body as T);
 }
+
+/** Decode a query-route response against its contract schema. A response that does not
+ * match is treated as a server fault rather than passed on half-understood: a refusal is
+ * recoverable, a wrong number stated confidently is not. */
+function decodeWith<S extends z.ZodType>(schema: S, route: RouteName) {
+  return (value: unknown): z.infer<S> => {
+    const parsed = schema.safeParse(value);
+    if (!parsed.success) {
+      // Paths and issue codes only, never values: a value is a customer's data. stderr,
+      // because in local mode stdout is the MCP transport.
+      console.error(
+        JSON.stringify({
+          severity: "WARNING",
+          event_name: "api_contract_mismatch",
+          event_data: {
+            route,
+            issues: parsed.error.issues.slice(0, 5).map((issue) => `${issue.path.join(".")}: ${issue.code}`),
+          },
+        }),
+      );
+      throw new ApiError("internal", 502, {}, { route });
+    }
+    return parsed.data;
+  };
+}
+
+const bp = (projectId: string, blueprintId: string) => ({ project_id: projectId, blueprint_id: blueprintId });
 
 export const api = {
   // `include` is a comma-separated extras list; today the only value is "blueprints", which
   // embeds each project's blueprint summaries. The records already carry them, so asking for
   // them costs the API layer nothing — and NOT asking costs one extra request per project.
   listProjects: (p: Principal, limit = 50, cursor?: string, include?: string) =>
-    callApi<ProjectPage>(p, "/v1/projects", { limit, cursor, include }, undefined, parseProjectPage),
+    callApi<ProjectPage>(p, "listProjects", { query: { limit, cursor, include }, decode: parseProjectPage }),
 
   getProject: (p: Principal, projectId: string) =>
-    callApi<ProjectDetail>(p, `/v1/projects/${encodeURIComponent(projectId)}`),
+    callApi<ProjectDetail>(p, "getProject", { params: { project_id: projectId } }),
 
   getBlueprint: (p: Principal, projectId: string, blueprintId: string) =>
-    callApi<BlueprintDetail>(
-      p,
-      `/v1/projects/${encodeURIComponent(projectId)}/blueprints/${encodeURIComponent(blueprintId)}`,
-    ),
+    callApi<BlueprintDetail>(p, "getBlueprint", { params: bp(projectId, blueprintId) }),
 
   getGeometry: (
     p: Principal,
@@ -434,101 +589,90 @@ export const api = {
     limit = 400,
     cursor?: string,
   ) =>
-    callApi<GeometryPage>(
-      p,
-      `/v1/projects/${encodeURIComponent(projectId)}/blueprints/${encodeURIComponent(blueprintId)}/geometry`,
-      { limit, cursor },
-    ),
+    callApi<GeometryPage>(p, "getGeometry", { params: bp(projectId, blueprintId), query: { limit, cursor } }),
 
   getTakeoff: (p: Principal, projectId: string, blueprintId: string) =>
-    callApi<TakeoffPage>(
-      p,
-      `/v1/projects/${encodeURIComponent(projectId)}/blueprints/${encodeURIComponent(blueprintId)}/takeoff`,
-    ),
+    callApi<TakeoffPage>(p, "getTakeoff", { params: bp(projectId, blueprintId) }),
 
   createProject: (p: Principal, name: string, description: string) =>
-    callApi<ProjectSummary>(p, "/v1/projects", undefined, {
-      method: "POST",
-      body: { name, description },
-    }),
+    callApi<ProjectSummary>(p, "createProject", { body: { name, description } }),
 
   updateProject: (p: Principal, projectId: string, patch: { name?: string; description?: string }) =>
-    callApi<ProjectSummary>(p, `/v1/projects/${encodeURIComponent(projectId)}`, undefined, {
-      method: "PATCH",
-      body: patch,
-    }),
+    callApi<ProjectSummary>(p, "updateProject", { params: { project_id: projectId }, body: patch }),
 
   listJobs: (p: Principal, projectId: string) =>
-    callApi<JobSummary[]>(p, `/v1/projects/${encodeURIComponent(projectId)}/jobs`),
+    callApi<JobSummary[]>(p, "listJobs", { params: { project_id: projectId } }),
 
   getJob: (p: Principal, projectId: string, jobId: string) =>
-    callApi<JobSummary>(
-      p,
-      `/v1/projects/${encodeURIComponent(projectId)}/jobs/${encodeURIComponent(jobId)}`,
-    ),
+    callApi<JobSummary>(p, "getJob", { params: { project_id: projectId, job_id: jobId } }),
 
   cancelJob: (p: Principal, projectId: string, jobId: string) =>
-    callApi<JobSummary>(
-      p,
-      `/v1/projects/${encodeURIComponent(projectId)}/jobs/${encodeURIComponent(jobId)}/cancel`,
-      undefined,
-      { method: "POST" },
-    ),
+    callApi<JobSummary>(p, "cancelJob", { params: { project_id: projectId, job_id: jobId } }),
 
   createUpload: (
     p: Principal,
     body: { filename?: string; project_id?: string; mime_type?: string },
-  ) => callApi<UploadTicket>(p, "/v1/uploads", undefined, { method: "POST", body }),
+  ) => callApi<UploadTicket>(p, "createUpload", { body }),
 
   completeUpload: (p: Principal, fileUuid: string) =>
-    callApi<UploadResult>(p, `/v1/uploads/${encodeURIComponent(fileUuid)}/complete`, undefined, {
-      method: "POST",
-    }),
+    callApi<UploadResult>(p, "completeUpload", { params: { file_uuid: fileUuid } }),
 
   listFolders: (p: Principal, projectId: string, blueprintId: string) =>
-    callApi<LegendPage>(
-      p,
-      `/v1/projects/${encodeURIComponent(projectId)}/blueprints/${encodeURIComponent(blueprintId)}/folders`,
-    ),
+    callApi<LegendPage>(p, "listFolders", { params: bp(projectId, blueprintId) }),
 
   patchFeatures: (
     p: Principal,
     projectId: string,
     blueprintId: string,
     body: { ids: string[]; name?: string; color?: Rgba; dry_run?: boolean },
+  ) => callApi<FeaturePatchResult>(p, "patchFeatures", { params: bp(projectId, blueprintId), body }),
+
+  /** Set the door|window tag and/or the height of ONE opening piece.
+   *
+   * Field-level and single-feature by contract. The alternative on the API
+   * side is a whole-collection PUT, which makes an editor echo back every
+   * feature on the sheet to change one number and races anything else editing
+   * that sheet. A caller holding a selection fans it out itself.
+   *
+   * The blueprint owns the path and the project rides in the query string,
+   * which is how the API layer spells its blueprint-first routes; the
+   * project-first spelling belongs to the batch `features` endpoint above.
+   *
+   * A height travels as the user stated it: the number, the unit and the user's own
+   * words. The server checks the words contain that figure and unit (a height nobody
+   * stated is refused), converts to metres, and converts again into the drawing's units
+   * through the sheet's scale. None of that is done here.
+   *
+   * Refusals: 409 the feature is not a wall_surface_with_opening (per element), 404
+   * not_found no such feature on this sheet (per element), needs_scale the sheet has no
+   * usable scale, invalid_request the height's words do not state it (the same for
+   * every element, since every element gets the same body). */
+  setOpeningPieceAttributes: (
+    p: Principal,
+    projectId: string,
+    blueprintId: string,
+    featureId: string,
+    body: { tag?: "door" | "window"; height?: HeightStatement },
   ) =>
-    callApi<FeaturePatchResult>(
-      p,
-      `/v1/projects/${encodeURIComponent(projectId)}/blueprints/${encodeURIComponent(blueprintId)}/features`,
-      undefined,
-      { method: "POST", body },
-    ),
+    callApi<OpeningPieceAttributes>(p, "setOpeningPieceAttributes", {
+      params: { blueprint_id: blueprintId, feature_id: featureId },
+      query: { project_id: projectId },
+      body,
+    }),
 
   createFolder: (
     p: Principal,
     projectId: string,
     blueprintId: string,
     body: { name: string; parent_id?: string; color?: Rgba; dry_run?: boolean },
-  ) =>
-    callApi<FolderCreated>(
-      p,
-      `/v1/projects/${encodeURIComponent(projectId)}/blueprints/${encodeURIComponent(blueprintId)}/folders`,
-      undefined,
-      { method: "POST", body },
-    ),
+  ) => callApi<FolderCreated>(p, "createFolder", { params: bp(projectId, blueprintId), body }),
 
   moveFeatures: (
     p: Principal,
     projectId: string,
     blueprintId: string,
     body: { ids: string[]; parent_id: string; index?: number; dry_run?: boolean },
-  ) =>
-    callApi<FeatureMoved>(
-      p,
-      `/v1/projects/${encodeURIComponent(projectId)}/blueprints/${encodeURIComponent(blueprintId)}/move`,
-      undefined,
-      { method: "POST", body },
-    ),
+  ) => callApi<FeatureMoved>(p, "moveFeatures", { params: bp(projectId, blueprintId), body }),
 
   importChatAttachment: (
     p: Principal,
@@ -538,7 +682,93 @@ export const api = {
       mime_type?: string;
       project_id?: string;
     },
-  ) => callApi<UploadResult>(p, "/v1/imports/chat-attachment", undefined, { method: "POST", body }),
+  ) => callApi<UploadResult>(p, "importChatAttachment", { body }),
+
+  locateBlueprint: (p: Principal, blueprintId: string) =>
+    callApi<BlueprintLocation>(p, "locateBlueprint", { params: { blueprint_id: blueprintId } }),
+
+  // ── query routes (behind KAMAI_QUERY_TOOLS) ────────────────────────────────────────
+  // Bodies are the route models' own field names. Responses are decoded against the
+  // contract schemas in query/contract.ts.
+
+  getVocabulary: (p: Principal) =>
+    callApi<Vocabulary>(p, "getVocabulary", { decode: decodeWith(vocabularySchema, "getVocabulary") }),
+
+  querySelect: (p: Principal, projectId: string, body: Record<string, unknown>) =>
+    callApi<SelectResult>(p, "querySelect", {
+      params: { project_id: projectId },
+      body,
+      decode: decodeWith(selectResultSchema, "querySelect"),
+    }),
+
+  queryAggregate: (p: Principal, projectId: string, body: Record<string, unknown>) =>
+    callApi<AggregateResult>(p, "queryAggregate", {
+      params: { project_id: projectId },
+      body,
+      decode: decodeWith(aggregateResultSchema, "queryAggregate"),
+    }),
+
+  queryWallSurface: (p: Principal, projectId: string, body: Record<string, unknown>) =>
+    callApi<WallSurfaceResult>(p, "queryWallSurface", {
+      params: { project_id: projectId },
+      body,
+      decode: decodeWith(wallSurfaceResultSchema, "queryWallSurface"),
+    }),
+
+  queryTable: (
+    p: Principal,
+    projectId: string,
+    body: {
+      selection: string;
+      language?: string;
+      ids_per_row?: number;
+      max_ids?: number;
+      row?: number;
+      row_key?: Record<string, string | null>;
+    },
+  ) =>
+    callApi<TableResult>(p, "queryTable", {
+      params: { project_id: projectId },
+      body,
+      decode: decodeWith(tableResultSchema, "queryTable"),
+    }),
+
+  queryResolve: (
+    p: Principal,
+    projectId: string,
+    body: {
+      selections: string[];
+      rows: Array<{ s: number; group?: Record<string, string | null> }>;
+      ids_per_row?: number;
+      max_ids?: number;
+    },
+  ) =>
+    callApi<ResolveResult>(p, "queryResolve", {
+      params: { project_id: projectId },
+      body,
+      decode: decodeWith(resolveResultSchema, "queryResolve"),
+    }),
+
+  getInventory: (p: Principal, projectId: string, blueprintIds?: readonly string[]) =>
+    callApi<InventoryResult>(p, "getInventory", {
+      params: { project_id: projectId },
+      query: { blueprint_ids: blueprintIds?.length ? blueprintIds.join(",") : undefined },
+      decode: decodeWith(inventoryResultSchema, "getInventory"),
+    }),
+
+  setScale: (p: Principal, projectId: string, blueprintId: string, label: string) =>
+    callApi<ScaleResult>(p, "setScale", {
+      params: bp(projectId, blueprintId),
+      body: { label },
+      decode: decodeWith(scaleResultSchema, "setScale"),
+    }),
+
+  geometrySelect: (p: Principal, projectId: string, blueprintId: string, ids: string[], grid?: number) =>
+    callApi<GeometrySelectResult>(p, "geometrySelect", {
+      params: bp(projectId, blueprintId),
+      body: grid === undefined ? { ids } : { ids, grid },
+      decode: decodeWith(geometrySelectResultSchema, "geometrySelect"),
+    }),
 };
 
 // The API layer scopes blueprints under their project, so a tool holding only a
@@ -550,9 +780,6 @@ export async function resolveProject(
   projectId?: string,
 ): Promise<string> {
   if (projectId) return projectId;
-  const found = await callApi<BlueprintLocation>(
-    principal,
-    `/v1/blueprints/${encodeURIComponent(blueprintId)}`,
-  );
+  const found = await api.locateBlueprint(principal, blueprintId);
   return found.project_id;
 }

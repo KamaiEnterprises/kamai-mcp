@@ -3,7 +3,7 @@ import { Map } from "lucide-react";
 
 import { callTool } from "./bridge";
 import { BlueprintPanel } from "./BlueprintWidget";
-import { BrandHeader, Button, LoadingState } from "./shared";
+import { ActionError, BrandHeader, Button, LoadingState } from "./shared";
 import { TakeoffPanel } from "./TakeoffPanel";
 import type { BlueprintData, TakeoffData } from "./types";
 import { useWidgetData } from "./useWidgetData";
@@ -12,7 +12,7 @@ export function TakeoffWidget() {
   const data = useWidgetData<TakeoffData>();
   const [blueprint, setBlueprint] = useState<BlueprintData | null>(null);
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<unknown>(null);
 
   if (!data) return <LoadingState label="Loading takeoff…" />;
   if (blueprint) return <BlueprintPanel initialData={blueprint} onBack={() => setBlueprint(null)} />;
@@ -26,7 +26,7 @@ export function TakeoffWidget() {
         project_id: data.project_id || undefined,
       }));
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Could not open this blueprint.");
+      setError(reason instanceof Error ? reason : new Error("Could not open this blueprint."));
     } finally {
       setLoading(false);
     }
@@ -46,7 +46,7 @@ export function TakeoffWidget() {
         subtitle={subtitle}
         actions={<Button variant="outline" size="xs" icon={Map} loading={loading} onClick={openPlan}>View plan</Button>}
       />
-      {error && <div className="alert alert-error mb-3 py-2 text-sm">{error}</div>}
+      <ActionError error={error} className="mb-3" />
       <TakeoffPanel data={data} />
     </>
   );

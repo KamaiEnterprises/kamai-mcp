@@ -13,6 +13,7 @@ import {
   folderCreatedSchema,
   geometryPageSchema,
   legendPageSchema,
+  openingPieceAttributesSchema,
   projectDetailSchema,
   projectSummarySchema,
   jobSummarySchema,
@@ -22,8 +23,32 @@ import {
   uploadResultSchema,
   uploadTicketSchema,
 } from "./api.ts";
+import type { GeometryPage, OpeningPieceAttributes } from "./api.ts";
 import type { Principal } from "./auth.ts";
+import { NO_INSTRUCTIONS, QUERY_TOOLS } from "./config.ts";
 import { BadArgument, MAX_LIMIT, buildElementsPage, invalidateScanCache, listElementsOutput } from "./elements.ts";
+import { toolErrorText } from "./errors.ts";
+import { looseOutput } from "./loose.ts";
+import {
+  APP_ONLY,
+  DESTRUCTIVE_IDEMPOTENT,
+  READONLY,
+  WRITE,
+  WRITE_IDEMPOTENT,
+  text,
+} from "./tool-kit.ts";
+import { registerListBlueprints } from "./query/list-blueprints.ts";
+import { registerQueryTools } from "./query/tools.ts";
+import {
+  EDIT_IDS_GUIDE,
+  EDIT_IDS_SENTENCE,
+  LIST_ELEMENTS_PREFIX,
+  SERVER_INSTRUCTIONS,
+  VIEW_BLUEPRINT_SUFFIX,
+  VIEW_TAKEOFF_HEAD,
+} from "./query/descriptions.ts";
+import type { ToolContext } from "./query/context.ts";
+import { HEIGHT_UNITS } from "./query/contract.ts";
 import {
   FRAME_ORIGINS,
   UI_MIME,
@@ -39,28 +64,81 @@ import {
 
 const UI_SCHEME_PREFIX = "ui://kamai/";
 
-const WRITE = { readOnlyHint: false, destructiveHint: false, openWorldHint: false } as const;
-const DESTRUCTIVE = { readOnlyHint: false, destructiveHint: true, openWorldHint: false } as const;
-const READONLY = { readOnlyHint: true, destructiveHint: false, openWorldHint: false } as const;
+// The one class the attributes route will write. Spelled once, and used in the
+// tool's prose, in its refusals, and in the filter those refusals tell the
+// caller to run, so the three cannot drift apart.
+const OPENING_PIECE_CLASS = "wall_surface_with_opening";
 
-// Superseded by a view_* tool. Still callable by id, just not advertised — every
-// advertised tool costs the user another approval prompt. The snake-dialect twin
-// keeps them callable from widgets on ChatGPT surfaces that gate on it.
-const APP_ONLY = { ui: { visibility: ["app"] }, "openai/widgetAccessible": true };
+// The API route is per feature, so a selection is N requests, not one. Four at
+// a time: enough that a normal selection finishes inside a turn, few enough
+// that a large one cannot arrive as a burst the API layer sheds. A shed
+// request is an element the user believes was written.
+const WRITE_CONCURRENCY = 4;
 
-// Both halves are load-bearing. FastMCP derived an output schema from the Python
-// tools' `-> dict` annotation and so emitted content AND structuredContent; the
-// widgets read the latter, so dropping it silently hands them undefined.
-const text = (value: unknown) => {
-  const content = [{ type: "text" as const, text: JSON.stringify(value) }];
-  return value !== null && typeof value === "object" && !Array.isArray(value)
-    ? { content, structuredContent: value as Record<string, unknown> }
-    : { content };
-};
+// And a ceiling on the fan-out itself. At one request per element a selection
+// of thousands is not a slow call, it is a call that never returns inside a
+// turn, and the caller is better told to split it than left waiting.
+const MAX_WRITE_IDS = 200;
 
-function fail(err: unknown): never {
-  if (err instanceof ApiError) throw new Error(err.message);
-  throw new Error("Something went wrong on the Kamai side.");
+/** Run `work` over `items`, at most `limit` in flight, results in input order. */
+async function mapBounded<T, R>(
+  items: readonly T[],
+  limit: number,
+  work: (item: T) => Promise<R>,
+): Promise<R[]> {
+  const out = new Array<R>(items.length);
+  let next = 0;
+  const worker = async () => {
+    for (let i = next++; i < items.length; i = next++) {
+      out[i] = await work(items[i]!);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+  return out;
+}
+
+/** Where the ids of opening pieces come from, in the words the tool list at hand can
+ * honour: find_elements exists only with the query tools. */
+const openingPieceIds = (queryTools: boolean): string =>
+  queryTools
+    ? `Get the ids from find_elements with category opening_pieces (or list_elements with cls ${OPENING_PIECE_CLASS}).`
+    : `Get the ids from list_elements with cls set to ${OPENING_PIECE_CLASS}.`;
+
+/** Refusals that are the same for every element of a set_opening_height call, because
+ * every element gets the same body: once one arrives, the rest are not sent. */
+const STOPS_FAN_OUT = new Set(["needs_scale", "invalid_request", "route_missing"]);
+
+/** Why one opening piece was turned away, phrased so the model can fix it in this turn.
+ *
+ * The wrong-class refusal is checked first, by status: it is per element (a wall in a
+ * selection of opening pieces), and the API layer sends it as invalid_request with 409,
+ * so keying on the code alone would stop the whole fan-out over one wrong id. Then the
+ * `code`; the status-only branches are for an API layer that answers with a bare
+ * `detail` string. The status itself never reaches the prose. */
+function refusalFor(err: ApiError, queryTools: boolean): string {
+  if (err.status === 409) {
+    return (
+      "That element is not a wall-surface opening piece, so no height and no door/window tag " +
+      `can be stored on it. Only elements of class ${OPENING_PIECE_CLASS} carry those two ` +
+      `fields. ${openingPieceIds(queryTools)} Write to the ids that returns. An opening itself ` +
+      "is not one of them, and its tag is the mark printed on the sheet, which is never rewritten."
+    );
+  }
+  if (err.code === "needs_scale") {
+    return toolErrorText(err, "set_opening_height", { queryTools });
+  }
+  if (err.code === "invalid_request" && err.detail) return err.detail;
+  if (err.code === "route_missing") return err.message;
+  if (err.status === 400) {
+    return (
+      "This sheet has no usable scale, so a height cannot be converted into the drawing's " +
+      "units. The sheet's scale has to be set first, then the height can be written."
+    );
+  }
+  if (err.status === 404) {
+    return "No element with that id is on this sheet. Read the ids again with list_elements.";
+  }
+  return toolErrorText(err, "set_opening_height", { queryTools });
 }
 
 // Declared where they are built. These four shapes are assembled in this file rather
@@ -73,6 +151,20 @@ const listProjectsOutput = z.object({
 const listJobsOutput = z.object({
   jobs: z.array(jobSummarySchema),
   count: z.number(),
+});
+
+// One PATCH per element, one row per element in the answer. `written` carries
+// what the sheet now stores for each element the write reached, and `refused`
+// carries the rest with the reason each one gave: an id that was turned away
+// must never be folded into a count that reads as a success over it. `applied`
+// is a restatement of `changed > 0`, kept because the other write tools in
+// this file all report one.
+const setOpeningHeightOutput = z.object({
+  applied: z.boolean(),
+  changed: z.number(),
+  fields: z.array(z.string()),
+  written: z.array(openingPieceAttributesSchema),
+  refused: z.array(z.object({ id: z.string(), reason: z.string() })),
 });
 
 const projectsWidgetOutput = z.object({
@@ -110,26 +202,88 @@ const uploadWidgetOutput = z.object({
   state: z.string(),
 });
 
-function widgetResult(name: WidgetName, structured: object) {
+// Both halves are load-bearing for widgets, same as `text()` above. Claude and
+// ChatGPT read structuredContent over the MCP Apps channel; Open WebUI's MCP App
+// Bridge (and hosts that drop structuredContent, ext-apps#696) only forward
+// content[0].text into the widget shim. Empty content left open_kamai stuck on
+// "Loading Kamai…" with the nested iframe never mounted.
+//
+// content is model-visible, so it carries `forModel` when given: a geometry page runs to
+// hundreds of KB on a large sheet and its image.url is a signed GCS URL, which must stay
+// out of the transcript for the same reason request_blueprint_upload is app-only.
+//
+// structuredContent goes through the tool's own outputSchema: the advertised JSON Schema is
+// additionalProperties: false, and the API grows fields the mirror in api.ts does not know
+// yet (geometry text/text_total/text_next_cursor, takeoff row folder). The SDK's own check
+// strips them silently, a validating client (Open WebUI's bridge, mcp 1.27) rejects the call.
+function widgetResult(
+  name: WidgetName,
+  schema: z.ZodObject,
+  structured: object,
+  forModel: object = structured,
+) {
+  const structuredContent = schema.parse(structured) as Record<string, unknown>;
   return {
-    content: [],
-    structuredContent: { ...structured } as Record<string, unknown>,
+    content: [{ type: "text" as const, text: JSON.stringify(forModel) }],
+    structuredContent,
     _meta: toolMeta(name),
   };
 }
 
-export function buildServer(principal: Principal): McpServer {
+// What the model needs to talk about a blueprint: its identity, state, scale and what
+// is on it by class. Rendering data (outlines, image) stays in structuredContent.
+function blueprintSummary(page: Omit<GeometryPage, "next_cursor">) {
+  const { image: _image, features, ...rest } = page;
+  const classes = new Map<string, number>();
+  for (const feature of features) classes.set(feature.cls, (classes.get(feature.cls) ?? 0) + 1);
+  return {
+    ...rest,
+    features_shown: features.length,
+    classes: [...classes.entries()].map(([cls, count]) => ({ cls, count })),
+  };
+}
+
+export interface HostHints {
+  // Only ChatGPT fills ingest_blueprint_from_chat's file parameter. Advertised anywhere else it
+  // is the tool a model reaches for first on "upload this PDF", and it can only fail.
+  chatgpt?: boolean;
+}
+
+export interface ServerOptions {
+  /** Register the query tools (KAMAI_QUERY_TOOLS=on). Settable so tests can flip it. */
+  queryTools?: boolean;
+  /** Send the server `instructions`. Off emulates hosts that drop them (claude.ai). */
+  instructions?: boolean;
+}
+
+const BASE_INSTRUCTIONS = "Tools for managing Kamai construction-blueprint projects, blueprints, and takeoffs.";
+
+export function buildServer(
+  principal: Principal,
+  host: HostHints = {},
+  opts: ServerOptions = {},
+): McpServer {
+  const queryTools = opts.queryTools ?? QUERY_TOOLS;
+  const withInstructions = opts.instructions ?? !NO_INSTRUCTIONS;
   const server = new McpServer(
     { name: "Kamai MCP Server", version: "0.1.0" },
     {
-      instructions:
-        "Tools for managing Kamai construction-blueprint projects, blueprints, and takeoffs.",
+      // Claude.ai drops instructions, so every rule here is also in a tool description.
+      ...(withInstructions ? { instructions: queryTools ? SERVER_INSTRUCTIONS : BASE_INSTRUCTIONS } : {}),
       capabilities: { tools: {}, resources: {} },
     },
   );
 
+  // What a failed call tells the model. Every call site names its tool, so the generic
+  // branch can say which one failed.
+  const fail: (err: unknown, tool: string) => never = (err, tool) => {
+    throw new Error(toolErrorText(err, tool, { queryTools }));
+  };
+
   const scanKey = (projectId: string, blueprintId: string) =>
     `${principal.uid}\u0000${principal.token}\u0000${projectId}\u0000${blueprintId}`;
+
+  const ctx: ToolContext = { principal, queryTools, fail, scanKey };
 
   // The id is load-bearing — it is in every cached ui:// URI — but the label is what a
   // host shows in a resource list, so it should read like the product, not the module.
@@ -139,9 +293,12 @@ export function buildServer(principal: Principal): McpServer {
     takeoff: "Kamai takeoff",
     upload: "Kamai upload",
     iframetest: "Kamai app",
+    table: "Kamai table",
   };
 
-  for (const name of WIDGET_NAMES) {
+  // The table widget is listed only with the query tools, so resources/list with the flag
+  // off is what it was. The any-version template below still serves it either way.
+  for (const name of WIDGET_NAMES.filter((n) => queryTools || n !== "table")) {
     registerAppResource(
       server,
       RESOURCE_LABEL[name],
@@ -191,7 +348,7 @@ export function buildServer(principal: Principal): McpServer {
       title: "List projects",
       description:
         "List the authenticated user's Kamai projects (most-recently-modified first).",
-      outputSchema: listProjectsOutput.shape,
+      outputSchema: looseOutput(listProjectsOutput),
       annotations: READONLY,
       _meta: APP_ONLY,
     },
@@ -200,7 +357,7 @@ export function buildServer(principal: Principal): McpServer {
         const page = await api.listProjects(principal);
         return text({ projects: page.items, count: page.items.length });
       } catch (err) {
-        fail(err);
+        fail(err, "list_projects");
       }
     },
   );
@@ -213,7 +370,7 @@ export function buildServer(principal: Principal): McpServer {
       description:
         "Show the user's Kamai projects and their blueprints as an interactive panel. " +
         "Use this whenever the user wants to see, browse or pick a project or blueprint.",
-      outputSchema: projectsWidgetOutput.shape,
+      outputSchema: looseOutput(projectsWidgetOutput),
       annotations: READONLY,
       _meta: toolMeta("projects"),
     },
@@ -232,12 +389,17 @@ export function buildServer(principal: Principal): McpServer {
             ready: b.ready,
           })),
         }));
-        return widgetResult("projects", { projects, count: projects.length });
+        return widgetResult("projects", projectsWidgetOutput, { projects, count: projects.length });
       } catch (err) {
-        fail(err);
+        fail(err, "view_projects");
       }
     },
   );
+
+  registerListBlueprints(server, ctx);
+  // Behind KAMAI_QUERY_TOOLS: every one of these needs an API route an older API layer
+  // does not serve.
+  if (queryTools) registerQueryTools(server, ctx);
 
   registerAppTool(
     server,
@@ -249,7 +411,7 @@ export function buildServer(principal: Principal): McpServer {
         "Refer to projects and blueprints by name in your replies. Never show a raw id " +
         "unless the user asks for one.",
       inputSchema: { project_id: z.string() },
-      outputSchema: projectDetailSchema.shape,
+      outputSchema: looseOutput(projectDetailSchema),
       annotations: READONLY,
       _meta: APP_ONLY,
     },
@@ -257,7 +419,7 @@ export function buildServer(principal: Principal): McpServer {
       try {
         return text(await api.getProject(principal, project_id));
       } catch (err) {
-        fail(err);
+        fail(err, "get_project");
       }
     },
   );
@@ -272,7 +434,7 @@ export function buildServer(principal: Principal): McpServer {
         blueprint_id: z.string(),
         project_id: z.string().optional(),
       },
-      outputSchema: blueprintDetailSchema.shape,
+      outputSchema: looseOutput(blueprintDetailSchema),
       annotations: READONLY,
       _meta: APP_ONLY,
     },
@@ -281,7 +443,7 @@ export function buildServer(principal: Principal): McpServer {
         const projectId = await resolveProject(principal, blueprint_id, project_id);
         return text(await api.getBlueprint(principal, projectId, blueprint_id));
       } catch (err) {
-        fail(err);
+        fail(err, "get_blueprint");
       }
     },
   );
@@ -295,12 +457,13 @@ export function buildServer(principal: Principal): McpServer {
         "Display a blueprint page with its take-off shapes drawn on top, as an interactive " +
         "panel. Use this whenever the user wants to see or look at a blueprint, its rooms, " +
         "walls or measured areas.\n\nRefer to the blueprint and project by name in your " +
-        "replies. Never show a raw id unless the user asks for one.",
+        "replies. Never show a raw id unless the user asks for one." +
+        (queryTools ? VIEW_BLUEPRINT_SUFFIX : ""),
       inputSchema: {
         blueprint_id: z.string(),
         project_id: z.string().optional(),
       },
-      outputSchema: blueprintWidgetOutput.shape,
+      outputSchema: looseOutput(blueprintWidgetOutput),
       annotations: READONLY,
       _meta: toolMeta("blueprint"),
     },
@@ -309,9 +472,9 @@ export function buildServer(principal: Principal): McpServer {
         const projectId = await resolveProject(principal, blueprint_id, project_id);
         const page = await api.getGeometry(principal, projectId, blueprint_id);
         const { next_cursor, ...widgetPayload } = page;
-        return widgetResult("blueprint", widgetPayload);
+        return widgetResult("blueprint", blueprintWidgetOutput, widgetPayload, blueprintSummary(widgetPayload));
       } catch (err) {
-        fail(err);
+        fail(err, "view_blueprint");
       }
     },
   );
@@ -322,16 +485,19 @@ export function buildServer(principal: Principal): McpServer {
     {
       title: "Takeoff quantities",
       description:
-        "Show measured take-off quantities for a blueprint as a sortable table, grouped " +
-        "by Areas / Lines / Objects with per-class counts, areas and lengths. Use this " +
-        "when the user asks about quantities, measurements, areas, how much of something " +
-        "there is, or wants a take-off summary.\n\nRefer to the blueprint and project by " +
+        (queryTools
+          ? VIEW_TAKEOFF_HEAD
+          : "Show measured take-off quantities for a blueprint as a sortable table, grouped " +
+            "by Areas / Lines / Objects with per-class counts, areas and lengths. Use this " +
+            "when the user asks about quantities, measurements, areas, how much of something " +
+            "there is, or wants a take-off summary.") +
+        "\n\nRefer to the blueprint and project by " +
         "name in your replies. Never show a raw id unless the user asks for one.",
       inputSchema: {
         blueprint_id: z.string(),
         project_id: z.string().optional(),
       },
-      outputSchema: takeoffPageSchema.shape,
+      outputSchema: looseOutput(takeoffPageSchema),
       annotations: READONLY,
       _meta: toolMeta("takeoff"),
     },
@@ -340,10 +506,11 @@ export function buildServer(principal: Principal): McpServer {
         const projectId = await resolveProject(principal, blueprint_id, project_id);
         return widgetResult(
           "takeoff",
+          takeoffPageSchema,
           await api.getTakeoff(principal, projectId, blueprint_id),
         );
       } catch (err) {
-        fail(err);
+        fail(err, "view_takeoff");
       }
     },
   );
@@ -357,6 +524,7 @@ export function buildServer(principal: Principal): McpServer {
     {
       title: "List blueprint elements",
       description:
+        (queryTools ? LIST_ELEMENTS_PREFIX : "") +
         "List a blueprint's individual take-off elements: one row per room, wall, door, " +
         "window or object, with its class, the folder it sits in on the drawing, its " +
         "measured area or length, and its outline. This is the per-element counterpart to " +
@@ -418,7 +586,7 @@ export function buildServer(principal: Principal): McpServer {
           .optional()
           .describe("`next_cursor` from a previous call, passed back exactly as it was given. A filtered cursor is an offset into one filter's matches, so it is bound to the exact cls, folder and name that produced it and is refused with any others; an unfiltered cursor counts rows and is refused if you add a filter. Change a filter and you start a new listing, without a cursor."),
       },
-      outputSchema: listElementsOutput.shape,
+      outputSchema: looseOutput(listElementsOutput),
       annotations: READONLY,
     },
     async ({ blueprint_id, project_id, ...args }) => {
@@ -441,7 +609,7 @@ export function buildServer(principal: Principal): McpServer {
         // call. Only this module's own BadArgument gets that pass — anything else still
         // goes through fail(), which never leaks an upstream detail string.
         if (err instanceof BadArgument) throw new Error(err.message);
-        fail(err);
+        fail(err, "list_elements");
       }
     },
   );
@@ -460,7 +628,7 @@ export function buildServer(principal: Principal): McpServer {
         blueprint_id: z.string(),
         project_id: z.string().optional(),
       },
-      outputSchema: legendPageSchema.shape,
+      outputSchema: looseOutput(legendPageSchema),
       annotations: READONLY,
     },
     async ({ blueprint_id, project_id }) => {
@@ -468,7 +636,7 @@ export function buildServer(principal: Principal): McpServer {
         const projectId = await resolveProject(principal, blueprint_id, project_id);
         return text(await api.listFolders(principal, projectId, blueprint_id));
       } catch (err) {
-        fail(err);
+        fail(err, "list_folders");
       }
     },
   );
@@ -479,18 +647,22 @@ export function buildServer(principal: Principal): McpServer {
       title: "Rename or recolour elements",
       description:
         "Rename or recolour specific elements or folders on a blueprint. Name and colour only — " +
-        "geometry cannot be changed here. Pass `ids` from list_elements or list_folders. " +
-        "Use dry_run to preview. Refer to the blueprint by name, not by id.",
+        "geometry cannot be changed here. " +
+        (queryTools ? EDIT_IDS_SENTENCE : "Pass `ids` from list_elements or list_folders.") +
+        " Use dry_run to preview. Refer to the blueprint by name, not by id.",
       inputSchema: {
         blueprint_id: z.string(),
         project_id: z.string().optional(),
-        ids: z.array(z.string()).min(1).describe("Local ids from list_elements or list_folders."),
+        ids: z
+          .array(z.string())
+          .min(1)
+          .describe(queryTools ? EDIT_IDS_GUIDE : "Local ids from list_elements or list_folders."),
         name: z.string().min(1).optional().describe("New label. Omit to leave names alone."),
         color: rgbaSchema.optional().describe("New colour, channels 0-255. Omit to leave colour alone."),
         dry_run: z.boolean().optional().describe("Report what would change without changing it."),
       },
-      outputSchema: featurePatchResultSchema.shape,
-      annotations: WRITE,
+      outputSchema: looseOutput(featurePatchResultSchema),
+      annotations: WRITE_IDEMPOTENT,
     },
     async ({ blueprint_id, project_id, ids, name, color, dry_run }) => {
       try {
@@ -510,7 +682,7 @@ export function buildServer(principal: Principal): McpServer {
         return text(result);
       } catch (err) {
         if (err instanceof BadArgument) throw new Error(err.message);
-        fail(err);
+        fail(err, "update_elements");
       }
     },
   );
@@ -534,7 +706,7 @@ export function buildServer(principal: Principal): McpServer {
         color: rgbaSchema.optional().describe("Folder colour, channels 0-255."),
         dry_run: z.boolean().optional(),
       },
-      outputSchema: folderCreatedSchema.shape,
+      outputSchema: looseOutput(folderCreatedSchema),
       annotations: WRITE,
     },
     async ({ blueprint_id, project_id, name, parent_id, color, dry_run }) => {
@@ -549,7 +721,7 @@ export function buildServer(principal: Principal): McpServer {
         if (!dry_run) invalidateScanCache(scanKey(projectId, blueprint_id));
         return text(result);
       } catch (err) {
-        fail(err);
+        fail(err, "create_folder");
       }
     },
   );
@@ -562,11 +734,16 @@ export function buildServer(principal: Principal): McpServer {
         "Move elements or folders into a folder on the SAME blueprint. The sheet's root folder " +
         "cannot move. A folder cannot be dropped into its own subtree. Cross-sheet moves are " +
         "refused. Moved non-folders inherit the destination folder's colour; a moved folder " +
-        "keeps its own. Pass ids from list_elements / list_folders. Refer to the blueprint by name.",
+        "keeps its own. " +
+        (queryTools ? EDIT_IDS_SENTENCE : "Pass ids from list_elements / list_folders.") +
+        " Refer to the blueprint by name.",
       inputSchema: {
         blueprint_id: z.string(),
         project_id: z.string().optional(),
-        ids: z.array(z.string()).min(1).describe("Local ids from list_elements or list_folders."),
+        ids: z
+          .array(z.string())
+          .min(1)
+          .describe(queryTools ? EDIT_IDS_GUIDE : "Local ids from list_elements or list_folders."),
         parent_id: z.string().describe("Destination folder id from list_folders."),
         index: z
           .number()
@@ -576,8 +753,8 @@ export function buildServer(principal: Principal): McpServer {
           .describe("Insertion index among the destination's remaining children. Omit to append."),
         dry_run: z.boolean().optional(),
       },
-      outputSchema: featureMovedSchema.shape,
-      annotations: WRITE,
+      outputSchema: looseOutput(featureMovedSchema),
+      annotations: WRITE_IDEMPOTENT,
     },
     async ({ blueprint_id, project_id, ids, parent_id, index, dry_run }) => {
       try {
@@ -591,7 +768,162 @@ export function buildServer(principal: Principal): McpServer {
         if (!dry_run) invalidateScanCache(scanKey(projectId, blueprint_id));
         return text(result);
       } catch (err) {
-        fail(err);
+        fail(err, "move_elements");
+      }
+    },
+  );
+
+  server.registerTool(
+    "set_opening_height",
+    {
+      title: "Set an opening piece's height or door/window tag",
+      description:
+        "Store a height, or a door/window tag, on the wall-surface pieces drawn across an " +
+        `opening. Class ${OPENING_PIECE_CLASS} is the ONLY class that carries these two ` +
+        "fields: a plain wall, a room, or the opening itself is refused, for the height as " +
+        `much as for the tag. ${openingPieceIds(queryTools)} ` +
+        "A floor plan carries no vertical dimension, so these pieces arrive with no height and " +
+        "every wall-surface figure computed from them falls back to a declared default. A " +
+        "height written here STAYS on the drawing and is read back instead of that default. " +
+        "The height is the USER's to give: pass the number, the unit they stated and " +
+        "height_quote, their own words containing that number and unit; a height without a " +
+        "matching quote is refused. Never pass a standard, typical or assumed height; if the " +
+        "user has not said how tall these are, ask them. " +
+        "An opening's own tag is the mark printed on the sheet and the server reads heights " +
+        "out of it, so it is never rewritten from here: door and window are the only values " +
+        "accepted, and only on wall-surface opening pieces. " +
+        "One request per element, so pass the selection you mean. Refer to the blueprint by name.",
+      inputSchema: {
+        blueprint_id: z.string(),
+        project_id: z.string().optional(),
+        ids: z
+          .array(z.string())
+          .min(1)
+          .describe(
+            `Local ids of class ${OPENING_PIECE_CLASS} only. Any other class is refused.`,
+          ),
+        height: z
+          .number()
+          .positive()
+          .finite()
+          .optional()
+          .describe(
+            "The height the USER stated, counted in `height_unit`. Ask them for it rather than supplying a standard or assumed figure. Omit to leave heights alone.",
+          ),
+        height_unit: z
+          .enum(HEIGHT_UNITS)
+          .optional()
+          .describe(
+            "Unit of `height`. Mandatory with it, because a bare number is not a dimension. Feet and inches written together are ONE height: pass their total in inches with unit in, never either part alone.",
+          ),
+        height_quote: z
+          .string()
+          .min(1)
+          .max(300)
+          .optional()
+          .describe(
+            "The user's own words stating this height, copied exactly from their message, feet and inch marks included. Required with height.",
+          ),
+        tag: z
+          .enum(["door", "window"])
+          .optional()
+          .describe(
+            "What the user says these pieces cross. Never read off the opening's size, and never copied from the mark printed on the sheet.",
+          ),
+      },
+      outputSchema: looseOutput(setOpeningHeightOutput),
+      annotations: WRITE_IDEMPOTENT,
+    },
+    async ({ blueprint_id, project_id, ids, height, height_unit, height_quote, tag }) => {
+      try {
+        if (height === undefined && tag === undefined) {
+          throw new BadArgument(
+            "Pass height (with height_unit and height_quote) or tag. An ids-only call would change nothing.",
+          );
+        }
+        // The unit and the words are half the dimension, and they are checked here rather
+        // than left to the server because the fix is the caller's: a height whose unit went
+        // missing is a height nobody can read back, and one without the user's words is a
+        // height the server will not believe. No worked figure in these messages on purpose:
+        // a number offered here is a number that gets copied onto a real drawing.
+        if (height !== undefined && height_unit === undefined) {
+          throw new BadArgument(
+            "Pass height_unit with height. A bare number is not a dimension, so state the unit the user used.",
+          );
+        }
+        if (height !== undefined && height_quote === undefined) {
+          throw new BadArgument(
+            "Pass height_quote with height: the user's own words stating it, copied exactly from their message. If the user did not state a height, leave height out and ask them.",
+          );
+        }
+        if (height === undefined && (height_unit !== undefined || height_quote !== undefined)) {
+          throw new BadArgument("height_unit and height_quote were passed without a height.");
+        }
+        if (ids.length > MAX_WRITE_IDS) {
+          throw new BadArgument(
+            `This writes one element per request, so it takes at most ${MAX_WRITE_IDS} ids at a time. Split the selection and call again.`,
+          );
+        }
+        const projectId = await resolveProject(principal, blueprint_id, project_id);
+        // The height travels as the user stated it. The server checks the words, converts
+        // to metres and then into the drawing's units through the sheet's scale.
+        const body = {
+          tag,
+          height:
+            height === undefined
+              ? undefined
+              : { value: height, unit: height_unit!, quote: height_quote! },
+        };
+
+        // A refusal that every element would give (no scale, a height the words do not
+        // state, a route the API does not have) stops the rest from being sent: N identical
+        // failures is N pointless round trips.
+        let sharedRefusal: string | undefined;
+        const outcomes = await mapBounded(ids, WRITE_CONCURRENCY, async (id) => {
+          if (sharedRefusal) return { id, reason: sharedRefusal };
+          try {
+            return await api.setOpeningPieceAttributes(principal, projectId, blueprint_id, id, body);
+          } catch (err) {
+            if (!(err instanceof ApiError)) throw err;
+            const reason = refusalFor(err, queryTools);
+            const perElement = err.status === 409 || (err.status === 404 && err.code !== "route_missing");
+            if (!perElement && (STOPS_FAN_OUT.has(err.code) || err.status === 400)) sharedRefusal = reason;
+            return { id, reason };
+          }
+        });
+
+        // Split on the one key only a stored row carries. The negation, rather
+        // than a second test for `reason`, so a row and a refusal can never
+        // both match and an element be counted twice.
+        const written = outcomes.filter((row): row is OpeningPieceAttributes => "feature_class" in row);
+        const refused = outcomes.filter(
+          (row): row is { id: string; reason: string } => !("feature_class" in row),
+        );
+        // Nothing written is not a partial success, it is a failed call, and
+        // it goes back as an error so the model treats it as one. The reason
+        // is the only one there is when every element gave the same answer,
+        // which is the common case: one wrong selection, or one unscaled sheet.
+        if (written.length === 0) {
+          const reasons = [...new Set(refused.map((row) => row.reason))];
+          throw new BadArgument(
+            reasons.length === 1
+              ? `Nothing was written. ${reasons[0]}`
+              : `Nothing was written. ${refused.map((row) => `${row.id}: ${row.reason}`).join(" ")}`,
+          );
+        }
+        invalidateScanCache(scanKey(projectId, blueprint_id));
+        return text({
+          applied: true,
+          changed: written.length,
+          fields: [
+            ...(height === undefined ? [] : ["height"]),
+            ...(tag === undefined ? [] : ["tag"]),
+          ],
+          written,
+          refused,
+        });
+      } catch (err) {
+        fail(err, "set_opening_height");
       }
     },
   );
@@ -602,14 +934,14 @@ export function buildServer(principal: Principal): McpServer {
       title: "Create a project",
       description: "Create a new Kamai project to hold blueprints.",
       inputSchema: { name: z.string().min(1), description: z.string().optional() },
-      outputSchema: projectSummarySchema.shape,
+      outputSchema: looseOutput(projectSummarySchema),
       annotations: WRITE,
     },
     async ({ name, description }) => {
       try {
         return text(await api.createProject(principal, name, description ?? ""));
       } catch (err) {
-        fail(err);
+        fail(err, "create_project");
       }
     },
   );
@@ -624,14 +956,14 @@ export function buildServer(principal: Principal): McpServer {
         name: z.string().min(1).optional(),
         description: z.string().optional(),
       },
-      outputSchema: projectSummarySchema.shape,
-      annotations: DESTRUCTIVE,
+      outputSchema: looseOutput(projectSummarySchema),
+      annotations: WRITE_IDEMPOTENT,
     },
     async ({ project_id, name, description }) => {
       try {
         return text(await api.updateProject(principal, project_id, { name, description }));
       } catch (err) {
-        fail(err);
+        fail(err, "update_project");
       }
     },
   );
@@ -645,7 +977,7 @@ export function buildServer(principal: Principal): McpServer {
         "status, progress and any error. Use it to see what is still running or why " +
         "something failed. Refer to jobs by their filename, not by id.",
       inputSchema: { project_id: z.string() },
-      outputSchema: listJobsOutput.shape,
+      outputSchema: looseOutput(listJobsOutput),
       annotations: READONLY,
     },
     async ({ project_id }) => {
@@ -653,7 +985,7 @@ export function buildServer(principal: Principal): McpServer {
         const jobs = await api.listJobs(principal, project_id);
         return text({ jobs, count: jobs.length });
       } catch (err) {
-        fail(err);
+        fail(err, "list_jobs");
       }
     },
   );
@@ -664,14 +996,14 @@ export function buildServer(principal: Principal): McpServer {
       title: "One upload job",
       description: "Get one processing job's status, progress and error, if any.",
       inputSchema: { project_id: z.string(), job_id: z.string() },
-      outputSchema: jobSummarySchema.shape,
+      outputSchema: looseOutput(jobSummarySchema),
       annotations: READONLY,
     },
     async ({ project_id, job_id }) => {
       try {
         return text(await api.getJob(principal, project_id, job_id));
       } catch (err) {
-        fail(err);
+        fail(err, "get_job");
       }
     },
   );
@@ -685,14 +1017,14 @@ export function buildServer(principal: Principal): McpServer {
         "finished or failed cannot be cancelled and is reported as such. Cancelling marks " +
         "the job; work already in progress on the Kamai side may still run to completion.",
       inputSchema: { project_id: z.string(), job_id: z.string() },
-      outputSchema: jobSummarySchema.shape,
-      annotations: DESTRUCTIVE,
+      outputSchema: looseOutput(jobSummarySchema),
+      annotations: DESTRUCTIVE_IDEMPOTENT,
     },
     async ({ project_id, job_id }) => {
       try {
         return text(await api.cancelJob(principal, project_id, job_id));
       } catch (err) {
-        fail(err);
+        fail(err, "cancel_job");
       }
     },
   );
@@ -715,7 +1047,7 @@ export function buildServer(principal: Principal): McpServer {
         project_id: z.string().optional(),
         mime_type: z.string().optional(),
       },
-      outputSchema: uploadTicketSchema.shape,
+      outputSchema: looseOutput(uploadTicketSchema),
       annotations: WRITE,
       // App-only. The ticket contains a GCS V4 signed URL, which is a bearer
       // credential — model-visible output puts it in the transcript. The widget is
@@ -728,7 +1060,7 @@ export function buildServer(principal: Principal): McpServer {
       try {
         return text(await api.createUpload(principal, { filename, project_id, mime_type }));
       } catch (err) {
-        fail(err);
+        fail(err, "request_blueprint_upload");
       }
     },
   );
@@ -744,7 +1076,7 @@ export function buildServer(principal: Principal): McpServer {
         "the project_id and the project_name.\n\n" +
         "When telling the user where the blueprint landed, use `project_name`, not the id.",
       inputSchema: { file_uuid: z.string() },
-      outputSchema: uploadResultSchema.shape,
+      outputSchema: looseOutput(uploadResultSchema),
       annotations: WRITE,
       // App-only: the other half of a flow the widget drives end to end.
       _meta: APP_ONLY,
@@ -753,7 +1085,7 @@ export function buildServer(principal: Principal): McpServer {
       try {
         return text(await api.completeUpload(principal, file_uuid));
       } catch (err) {
-        fail(err);
+        fail(err, "finalize_blueprint_upload");
       }
     },
   );
@@ -767,70 +1099,72 @@ export function buildServer(principal: Principal): McpServer {
         "Open an upload panel where the user can pick a blueprint PDF and watch it process. " +
         "Use this whenever the user wants to upload, add or import a blueprint.",
       inputSchema: { project_id: z.string().optional() },
-      outputSchema: uploadWidgetOutput.shape,
-      annotations: WRITE,
+      outputSchema: looseOutput(uploadWidgetOutput),
+      annotations: READONLY,
       _meta: toolMeta("upload"),
     },
     async ({ project_id }) => {
       try {
         const page = await api.listProjects(principal, 100);
-        return widgetResult("upload", {
+        return widgetResult("upload", uploadWidgetOutput, {
           projects: page.items.map((p) => ({ id: p.id, name: p.name })),
           project_id: project_id ?? null,
           state: "idle",
         });
       } catch (err) {
-        fail(err);
+        fail(err, "view_upload");
       }
     },
   );
 
-  server.registerTool(
-    "ingest_blueprint_from_chat",
-    {
-      title: "Import an attached blueprint",
-      description:
-        "Ingest a blueprint PDF the user attached in this ChatGPT message and start processing.\n\n" +
-        "Attach the blueprint PDF to your message, then call this tool. Returns the job_id and " +
-        "project_id; uses the user's Default Project when project_id is omitted. ChatGPT web only.",
-      inputSchema: {
-        // App submission is validated against ChatGPT's fixed file schema and is
-        // rejected if this diverges: download_url and file_id required, mime_type
-        // and file_name optional. Widening any of it fails the tool scan.
-        blueprint_file: z.object({
-          download_url: z.string(),
-          file_id: z.string(),
-          mime_type: z.string().optional(),
-          file_name: z.string().optional(),
-        }),
-        project_id: z.string().optional(),
-      },
-      outputSchema: uploadResultSchema.shape,
-      // The only tool that reaches a host Kamai does not control.
-      annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: true },
-      _meta: { "openai/fileParams": ["blueprint_file"] },
-    },
-    async ({ blueprint_file, project_id }) => {
-      if (!blueprint_file.download_url?.startsWith("https://")) {
-        throw new Error(
-          "The attachment reference has no usable download_url. Re-attach the PDF on ChatGPT web, " +
-            "or use view_upload to pick the file directly.",
-        );
-      }
-      try {
-        return text(
-          await api.importChatAttachment(principal, {
-            download_url: blueprint_file.download_url,
-            file_name: blueprint_file.file_name,
-            mime_type: blueprint_file.mime_type,
-            project_id,
+  if (host.chatgpt) {
+    server.registerTool(
+      "ingest_blueprint_from_chat",
+      {
+        title: "Import an attached blueprint",
+        description:
+          "Ingest a blueprint PDF the user attached in this ChatGPT message and start processing.\n\n" +
+          "Attach the blueprint PDF to your message, then call this tool. Returns the job_id and " +
+          "project_id; uses the user's Default Project when project_id is omitted. ChatGPT web only.",
+        inputSchema: {
+          // App submission is validated against ChatGPT's fixed file schema and is
+          // rejected if this diverges: download_url and file_id required, mime_type
+          // and file_name optional. Widening any of it fails the tool scan.
+          blueprint_file: z.object({
+            download_url: z.string(),
+            file_id: z.string(),
+            mime_type: z.string().optional(),
+            file_name: z.string().optional(),
           }),
-        );
-      } catch (err) {
-        fail(err);
-      }
-    },
-  );
+          project_id: z.string().optional(),
+        },
+        outputSchema: looseOutput(uploadResultSchema),
+        // The only tool that reaches a host Kamai does not control.
+        annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
+        _meta: { "openai/fileParams": ["blueprint_file"] },
+      },
+      async ({ blueprint_file, project_id }) => {
+        if (!blueprint_file.download_url?.startsWith("https://")) {
+          throw new Error(
+            "The attachment reference has no usable download_url. Re-attach the PDF on ChatGPT web, " +
+              "or use view_upload to pick the file directly.",
+          );
+        }
+        try {
+          return text(
+            await api.importChatAttachment(principal, {
+              download_url: blueprint_file.download_url,
+              file_name: blueprint_file.file_name,
+              mime_type: blueprint_file.mime_type,
+              project_id,
+            }),
+          );
+        } catch (err) {
+          fail(err, "ingest_blueprint_from_chat");
+        }
+      },
+    );
+  }
 
   registerAppTool(
     server,
@@ -859,7 +1193,7 @@ export function buildServer(principal: Principal): McpServer {
               "via KAMAI_APP_ORIGINS without changing the call.",
           ),
       },
-      outputSchema: kamaiAppOutput.shape,
+      outputSchema: looseOutput(kamaiAppOutput),
       annotations: READONLY,
       _meta: toolMeta("iframetest"),
     },
@@ -871,7 +1205,7 @@ export function buildServer(principal: Principal): McpServer {
             "Add it to KAMAI_APP_ORIGINS and restart.",
         );
       }
-      return widgetResult("iframetest", {
+      return widgetResult("iframetest", kamaiAppOutput, {
         url: target,
         // One setting. pip is documented but ChatGPT web coerces it away, so offering
         // it as a default just produces an unpredictable panel.

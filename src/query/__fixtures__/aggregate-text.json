@@ -1,0 +1,60 @@
+{
+  "project_id": "projEvalTower",
+  "project_name": "Eval Tower",
+  "blueprints": [
+    {
+      "blueprint_id": "bpEval_a",
+      "name": "Ground Floor",
+      "units": "metric",
+      "has_scale": true
+    }
+  ],
+  "group_by": [
+    "name"
+  ],
+  "groups": [
+    {
+      "name": "CONCRETE",
+      "count": 1,
+      "element_count": 0,
+      "text_ids": {
+        "bpEval_a": [
+          "t_concrete"
+        ]
+      },
+      "text_ids_truncated": false
+    },
+    {
+      "name": "KITCHEN",
+      "count": 1,
+      "element_count": 0,
+      "text_ids": {
+        "bpEval_a": [
+          "t_kitchen"
+        ]
+      },
+      "text_ids_truncated": false
+    },
+    {
+      "name": "WALL",
+      "count": 1,
+      "element_count": 0,
+      "text_ids": {
+        "bpEval_a": [
+          "t_wall"
+        ]
+      },
+      "text_ids_truncated": false
+    }
+  ],
+  "groups_total": 3,
+  "groups_truncated": false,
+  "total": {
+    "count": 3,
+    "count_is_partial": false
+  },
+  "excluded": [],
+  "total_is_partial": false,
+  "notes": [],
+  "selection": "q1.eNoVizsOgCAUBO-yNY0tvTewM4YgPgl-gODzF-LdhW6ys5MxQ2aM20kxOc_KTQdkjzG2l96UxiBgNJMN6YUE08P4BGz9eL1T9WsRJpyeIRALxxSWWnfhplS2C7L5fkANIiE"
+}

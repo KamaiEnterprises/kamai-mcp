@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Eye, EyeOff, Maximize2 } from "lucide-react";
 
-import { callTool, reportSize, requestDisplayMode } from "./bridge";
+import { callTool, HostCannotCallTools, reportSize, requestDisplayMode } from "./bridge";
 import { rgba } from "./format";
-import { BrandHeader, Button, Card, LoadingState, ProcessingState } from "./shared";
+import { ActionError, BrandHeader, Button, Card, KAMAI_APP_URL, LoadingState, OpenKamai, ProcessingState } from "./shared";
 import { TakeoffPanel } from "./TakeoffPanel";
-import type { BlueprintData, GeometryFeature, TakeoffData } from "./types";
+import type { BlueprintData, GeometryFeature, Highlight, TakeoffData } from "./types";
 import { useWidgetData } from "./useWidgetData";
 
 const DEFAULT_GRID = 2000;
@@ -110,7 +110,34 @@ function nearPath(feature: GeometryFeature, x: number, y: number, tolerance: num
   return false;
 }
 
-function BlueprintCanvas({ data }: { data: BlueprintData }) {
+function drawHighlight(context: CanvasRenderingContext2D, highlight: Highlight, width: number, accent: string): void {
+  const scale = width / (highlight.grid || DEFAULT_GRID);
+  const color = { r: 0, g: 0, b: 0, a: 255 };
+  for (const outline of highlight.outlines) {
+    context.save();
+    if (outline.rings?.length) {
+      context.beginPath();
+      for (const ring of outline.rings) {
+        trace(context, ring, scale);
+        context.closePath();
+      }
+      context.globalAlpha = 0.3;
+      context.fillStyle = accent;
+      context.fill("evenodd");
+      context.globalAlpha = 1;
+      context.lineWidth = 2.5;
+      context.strokeStyle = accent;
+      context.stroke();
+    }
+    context.restore();
+    // Lines and points take the selected style drawFeature already has.
+    if (outline.lines?.length || outline.pts?.length) {
+      drawFeature(context, { ...outline, rings: null, color: outline.color ?? color }, scale, true, accent);
+    }
+  }
+}
+
+function BlueprintCanvas({ data, highlight }: { data: BlueprintData; highlight?: Highlight }) {
   const container = useRef<HTMLDivElement>(null);
   const canvas = useRef<HTMLCanvasElement>(null);
   const view = useRef({ width: 0, height: 0, scale: 1 });
@@ -178,11 +205,18 @@ function BlueprintCanvas({ data }: { data: BlueprintData }) {
     if (image?.complete && image.naturalWidth) context.drawImage(image, 0, 0, width, height);
     const scale = width / grid;
     const accent = getComputedStyle(document.documentElement).getPropertyValue("--color-primary").trim() || "#004fb5";
+    // With a highlight, everything else is dimmed and the row's elements are drawn from
+    // their own outlines, which cover elements past the page this plan loaded.
+    if (highlight) context.globalAlpha = 0.25;
     for (const feature of features) {
-      if (!hidden.has(feature.cls)) drawFeature(context, feature, scale, selected?.i === feature.i, accent);
+      if (hidden.has(feature.cls)) continue;
+      if (highlight && feature.id && highlight.ids.has(feature.id)) continue;
+      drawFeature(context, feature, scale, selected?.i === feature.i, accent);
     }
+    context.globalAlpha = 1;
+    if (highlight) drawHighlight(context, highlight, width, accent);
     view.current = { width, height, scale };
-  }, [data.image?.h, data.image?.w, features, grid, hidden, image, selected?.i]);
+  }, [data.image?.h, data.image?.w, features, grid, hidden, highlight, image, selected?.i]);
 
   useEffect(() => {
     draw();
@@ -266,12 +300,25 @@ function BlueprintCanvas({ data }: { data: BlueprintData }) {
   );
 }
 
-export function BlueprintPanel({ initialData, onBack }: { initialData: BlueprintData; onBack?: () => void }) {
+export function BlueprintPanel({
+  initialData,
+  onBack,
+  highlight,
+  banner,
+}: {
+  initialData: BlueprintData;
+  onBack?: () => void;
+  /** Elements to light up, everything else dimmed (a table row's elements). */
+  highlight?: Highlight;
+  /** Shown above the plan, e.g. which table row is highlighted. */
+  banner?: React.ReactNode;
+}) {
   const [data, setData] = useState(initialData);
   const [tab, setTab] = useState<"plan" | "takeoff">("plan");
   const [takeoff, setTakeoff] = useState<TakeoffData | null>(null);
   const [takeoffLoading, setTakeoffLoading] = useState(false);
-  const [takeoffError, setTakeoffError] = useState<string | null>(null);
+  const [takeoffError, setTakeoffError] = useState<unknown>(null);
+  const [pollError, setPollError] = useState<unknown>(null);
 
   useEffect(() => setData(initialData), [initialData]);
 
@@ -291,8 +338,13 @@ export function BlueprintPanel({ initialData, onBack }: { initialData: Blueprint
         });
         if (!cancelled) setData(next);
         if (next.state !== "processing") window.clearInterval(timer);
-      } catch {
-        undefined;
+      } catch (reason) {
+        // A transient failure is retried on the next tick; a host that cannot run tools never
+        // will, and the panel would otherwise sit on the progress bar with no way out.
+        if (reason instanceof HostCannotCallTools) {
+          window.clearInterval(timer);
+          if (!cancelled) setPollError(reason);
+        }
       }
     }, 5000);
     return () => {
@@ -312,7 +364,7 @@ export function BlueprintPanel({ initialData, onBack }: { initialData: Blueprint
         project_id: data.project_id || undefined,
       }));
     } catch (reason) {
-      setTakeoffError(reason instanceof Error ? reason.message : "Could not load takeoff quantities.");
+      setTakeoffError(reason instanceof Error ? reason : new Error("Could not load takeoff quantities."));
     } finally {
       setTakeoffLoading(false);
     }
@@ -329,6 +381,7 @@ export function BlueprintPanel({ initialData, onBack }: { initialData: Blueprint
       <>
         <BrandHeader title={data.name || "Blueprint"} subtitle={data.project_name ? `in ${data.project_name}` : undefined} onBack={onBack} />
         <ProcessingState failed={data.state === "failed"} progress={data.progress} message={data.error_message} />
+        <ActionError error={pollError} className="mt-3" />
       </>
     );
   }
@@ -352,15 +405,16 @@ export function BlueprintPanel({ initialData, onBack }: { initialData: Blueprint
         }
       />
 
+      {banner}
       {tab === "plan" ? (
         <>
-          <BlueprintCanvas data={data} />
+          <BlueprintCanvas data={data} highlight={highlight} />
           {!data.image?.url && <p className="mt-2 text-xs text-base-content/50">No preview image is available; showing takeoff geometry.</p>}
         </>
       ) : takeoffLoading ? (
         <LoadingState label="Loading takeoff…" />
       ) : takeoffError ? (
-        <div className="alert alert-error py-2 text-sm">{takeoffError}</div>
+        <ActionError error={takeoffError} />
       ) : takeoff ? (
         <TakeoffPanel data={takeoff} compact />
       ) : (
@@ -370,8 +424,39 @@ export function BlueprintPanel({ initialData, onBack }: { initialData: Blueprint
   );
 }
 
+// A host that forwards only content[0].text hands us the model summary: counts, no outlines
+// and no image. Drawing it would be an empty canvas captioned "showing takeoff geometry".
+function BlueprintSummary({ data }: { data: BlueprintData }) {
+  const subtitle = [data.project_name ? `in ${data.project_name}` : null, data.scale_label].filter(Boolean).join(" · ");
+  return (
+    <>
+      <BrandHeader title={data.name || "Blueprint"} subtitle={subtitle || undefined} />
+      <Card className="p-4">
+        <p className="text-sm text-base-content/70">
+          {data.truncated ? `First ${data.features_shown ?? 0} take-off elements` : `${data.features_shown ?? 0} take-off elements`}.
+          {" "}This chat cannot draw the plan; open it in Kamai to see it.
+        </p>
+        {data.classes && data.classes.length > 0 && (
+          <ul className="mt-3 grid grid-cols-[repeat(auto-fit,minmax(160px,1fr))] gap-x-4 gap-y-1 text-sm">
+            {data.classes.map((row) => (
+              <li key={row.cls} className="flex justify-between gap-3">
+                <span className="truncate">{row.cls}</span>
+                <span className="tabular-nums text-base-content/60">{row.count}</span>
+              </li>
+            ))}
+          </ul>
+        )}
+        <div className="mt-4">
+          <OpenKamai href={`${KAMAI_APP_URL}/projects/${encodeURIComponent(data.project_id)}`} label="Open in Kamai" />
+        </div>
+      </Card>
+    </>
+  );
+}
+
 export function BlueprintWidget() {
   const data = useWidgetData<BlueprintData>();
   if (!data) return <LoadingState label="Loading blueprint…" />;
+  if (!data.features && data.classes) return <BlueprintSummary data={data} />;
   return <BlueprintPanel initialData={data} />;
 }

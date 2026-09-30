@@ -1,0 +1,44 @@
+{
+  "rows": [
+    {
+      "element_ids": {
+        "bpEval_a": [
+          "d4"
+        ]
+      },
+      "element_count": 1,
+      "element_ids_truncated": false
+    },
+    {
+      "element_ids": {
+        "bpEval_a": [
+          "d1",
+          "d2",
+          "d3",
+          "d4",
+          "d5"
+        ],
+        "bpEval_b": [
+          "d_wc"
+        ]
+      },
+      "element_count": 6,
+      "element_ids_truncated": false
+    },
+    {
+      "element_ids": {
+        "bpEval_a": [
+          "d1"
+        ]
+      },
+      "element_count": 1,
+      "element_ids_truncated": false
+    },
+    {
+      "element_ids": {},
+      "element_count": 0,
+      "element_ids_truncated": false,
+      "problem": "group must name exactly the count's group_by fields (folder, sub_class, tag)."
+    }
+  ]
+}

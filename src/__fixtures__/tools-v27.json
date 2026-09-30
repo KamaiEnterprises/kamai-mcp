@@ -1,0 +1,685 @@
+{
+  "list_projects": {
+    "title": "List projects",
+    "description": "List the authenticated user's Kamai projects (most-recently-modified first).",
+    "inputSchema": {
+      "type": "object",
+      "properties": {}
+    },
+    "_meta": {
+      "ui": {
+        "visibility": [
+          "app"
+        ]
+      },
+      "openai/widgetAccessible": true
+    }
+  },
+  "view_projects": {
+    "title": "View projects",
+    "description": "Show the user's Kamai projects and their blueprints as an interactive panel. Use this whenever the user wants to see, browse or pick a project or blueprint.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {}
+    },
+    "_meta": {
+      "ui": {
+        "resourceUri": "ui://kamai/projects@v27.html",
+        "visibility": [
+          "model",
+          "app"
+        ]
+      },
+      "openai/outputTemplate": "ui://kamai/projects@v27.html",
+      "openai/widgetAccessible": true,
+      "ui/resourceUri": "ui://kamai/projects@v27.html"
+    }
+  },
+  "get_project": {
+    "title": "Project details",
+    "description": "Get one project's details, including its blueprints and processing jobs.\n\nRefer to projects and blueprints by name in your replies. Never show a raw id unless the user asks for one.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "project_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "project_id"
+      ],
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "_meta": {
+      "ui": {
+        "visibility": [
+          "app"
+        ]
+      },
+      "openai/widgetAccessible": true
+    }
+  },
+  "get_blueprint": {
+    "title": "Blueprint details",
+    "description": "Get a blueprint's processing state and readiness.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "blueprint_id": {
+          "type": "string"
+        },
+        "project_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "blueprint_id"
+      ],
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "_meta": {
+      "ui": {
+        "visibility": [
+          "app"
+        ]
+      },
+      "openai/widgetAccessible": true
+    }
+  },
+  "view_blueprint": {
+    "title": "View blueprint",
+    "description": "Display a blueprint page with its take-off shapes drawn on top, as an interactive panel. Use this whenever the user wants to see or look at a blueprint, its rooms, walls or measured areas.\n\nRefer to the blueprint and project by name in your replies. Never show a raw id unless the user asks for one.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "blueprint_id": {
+          "type": "string"
+        },
+        "project_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "blueprint_id"
+      ],
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "_meta": {
+      "ui": {
+        "resourceUri": "ui://kamai/blueprint@v27.html",
+        "visibility": [
+          "model",
+          "app"
+        ]
+      },
+      "openai/outputTemplate": "ui://kamai/blueprint@v27.html",
+      "openai/widgetAccessible": true,
+      "ui/resourceUri": "ui://kamai/blueprint@v27.html"
+    }
+  },
+  "view_takeoff": {
+    "title": "Takeoff quantities",
+    "description": "Show measured take-off quantities for a blueprint as a sortable table, grouped by Areas / Lines / Objects with per-class counts, areas and lengths. Use this when the user asks about quantities, measurements, areas, how much of something there is, or wants a take-off summary.\n\nRefer to the blueprint and project by name in your replies. Never show a raw id unless the user asks for one.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "blueprint_id": {
+          "type": "string"
+        },
+        "project_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "blueprint_id"
+      ],
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "_meta": {
+      "ui": {
+        "resourceUri": "ui://kamai/takeoff@v27.html",
+        "visibility": [
+          "model",
+          "app"
+        ]
+      },
+      "openai/outputTemplate": "ui://kamai/takeoff@v27.html",
+      "openai/widgetAccessible": true,
+      "ui/resourceUri": "ui://kamai/takeoff@v27.html"
+    }
+  },
+  "list_elements": {
+    "title": "List blueprint elements",
+    "description": "List a blueprint's individual take-off elements: one row per room, wall, door, window or object, with its class, the folder it sits in on the drawing, its measured area or length, and its outline. This is the per-element counterpart to `view_takeoff`, which returns only per-class totals — use view_takeoff for quantities, and this when the user asks about particular elements, their sizes, where they are, or what is inside one folder.\n\nNarrow it with `cls`, `folder` and `name` (case-insensitive substring match). Kamai's geometry endpoint has no filter of its own, so this tool reads the blueprint and filters here: `matched`, `filter_scanned` and `filter_complete` say what the filter actually saw, and `filter_complete` false means elements exist that were never checked.\n\n`rings`, `lines` and `pts` are flat [x0,y0,x1,y1,...] integer paths in the blueprint's own drawing space, where the page is `grid` units wide. They give shape and position, not size: quote `area` and `len` in `units` for measurements, and never compute a measurement from the coordinates. Both are null when `needs_scale` is true, and provisional when `scale_unconfirmed` is true.\n\nEach row's `id` is the stable local id for `update_elements` and `move_elements`. Folders are not in this list (they have no shape) — use `list_folders` for those.\n\nOutlines are bulky, so pages are small: `limit` defaults to 50 and is held to 100 while `include_geometry` is true. A page is also held to a size budget, so `returned` can be smaller than `limit` — a single traced wall can carry thousands of points. Pass include_geometry false for a cheaper index of up to 400 elements with names, classes and measurements only. Always check `truncated` and read `notes` before telling the user what a blueprint contains — a truncated page is not the blueprint.\n\nRefer to the blueprint and project by name in your replies. Never show a raw id unless the user asks for one.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "blueprint_id": {
+          "type": "string"
+        },
+        "project_id": {
+          "type": "string"
+        },
+        "cls": {
+          "description": "Keep only elements whose class contains this text, case-insensitively (door, room, wall, window, ...).",
+          "type": "string",
+          "minLength": 1
+        },
+        "folder": {
+          "description": "Keep only elements whose drawing folder contains this text, case-insensitively. This is the grouping view_takeoff summarises.",
+          "type": "string",
+          "minLength": 1
+        },
+        "name": {
+          "description": "Keep only elements whose name contains this text, case-insensitively.",
+          "type": "string",
+          "minLength": 1
+        },
+        "include_geometry": {
+          "description": "Return rings, lines and pts for each element. Default true — that geometry is the point of this tool. Set false for a longer, cheaper list of names and measurements.",
+          "type": "boolean"
+        },
+        "limit": {
+          "description": "Elements per page. Default 50; reduced to 100 when include_geometry is true, and reduced further if the outlines on the page are large. Either reduction is reported in `notes`.",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 400
+        },
+        "cursor": {
+          "description": "`next_cursor` from a previous call, passed back exactly as it was given. A filtered cursor is an offset into one filter's matches, so it is bound to the exact cls, folder and name that produced it and is refused with any others; an unfiltered cursor counts rows and is refused if you add a filter. Change a filter and you start a new listing, without a cursor.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "blueprint_id"
+      ],
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    }
+  },
+  "list_folders": {
+    "title": "List blueprint folders",
+    "description": "List a blueprint's legend folders: id, name, parent, and colour. Geometry tools skip folders because they have no shape, so call this when the user asks to create, rename, recolour, or move items between folders. Pass a folder's `id` to create_folder (as parent_id), update_elements, or move_elements. Do not show raw ids unless the user asks for one. Refer to the blueprint and project by name.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "blueprint_id": {
+          "type": "string"
+        },
+        "project_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "blueprint_id"
+      ],
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    }
+  },
+  "update_elements": {
+    "title": "Rename or recolour elements",
+    "description": "Rename or recolour specific elements or folders on a blueprint. Name and colour only — geometry cannot be changed here. Pass `ids` from list_elements or list_folders. Use dry_run to preview. Refer to the blueprint by name, not by id.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "blueprint_id": {
+          "type": "string"
+        },
+        "project_id": {
+          "type": "string"
+        },
+        "ids": {
+          "description": "Local ids from list_elements or list_folders.",
+          "minItems": 1,
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "name": {
+          "description": "New label. Omit to leave names alone.",
+          "type": "string",
+          "minLength": 1
+        },
+        "color": {
+          "description": "New colour, channels 0-255. Omit to leave colour alone.",
+          "type": "object",
+          "properties": {
+            "r": {
+              "type": "number"
+            },
+            "g": {
+              "type": "number"
+            },
+            "b": {
+              "type": "number"
+            },
+            "a": {
+              "type": "number"
+            }
+          },
+          "required": [
+            "r",
+            "g",
+            "b",
+            "a"
+          ]
+        },
+        "dry_run": {
+          "description": "Report what would change without changing it.",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "blueprint_id",
+        "ids"
+      ],
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    }
+  },
+  "create_folder": {
+    "title": "Create a legend folder",
+    "description": "Create a folder on a blueprint, under an existing folder or under the sheet's root. parent_id must be a folder from list_folders; omit it to create under the root. A missing or non-folder parent is refused, not guessed. Refer to the blueprint by name.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "blueprint_id": {
+          "type": "string"
+        },
+        "project_id": {
+          "type": "string"
+        },
+        "name": {
+          "description": "The folder's label.",
+          "type": "string",
+          "minLength": 1
+        },
+        "parent_id": {
+          "description": "Folder id from list_folders. Omit to create under the sheet's root.",
+          "type": "string"
+        },
+        "color": {
+          "description": "Folder colour, channels 0-255.",
+          "type": "object",
+          "properties": {
+            "r": {
+              "type": "number"
+            },
+            "g": {
+              "type": "number"
+            },
+            "b": {
+              "type": "number"
+            },
+            "a": {
+              "type": "number"
+            }
+          },
+          "required": [
+            "r",
+            "g",
+            "b",
+            "a"
+          ]
+        },
+        "dry_run": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "blueprint_id",
+        "name"
+      ],
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    }
+  },
+  "move_elements": {
+    "title": "Move elements between folders",
+    "description": "Move elements or folders into a folder on the SAME blueprint. The sheet's root folder cannot move. A folder cannot be dropped into its own subtree. Cross-sheet moves are refused. Moved non-folders inherit the destination folder's colour; a moved folder keeps its own. Pass ids from list_elements / list_folders. Refer to the blueprint by name.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "blueprint_id": {
+          "type": "string"
+        },
+        "project_id": {
+          "type": "string"
+        },
+        "ids": {
+          "description": "Local ids from list_elements or list_folders.",
+          "minItems": 1,
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "parent_id": {
+          "description": "Destination folder id from list_folders.",
+          "type": "string"
+        },
+        "index": {
+          "description": "Insertion index among the destination's remaining children. Omit to append.",
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "dry_run": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "blueprint_id",
+        "ids",
+        "parent_id"
+      ],
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    }
+  },
+  "set_opening_height": {
+    "title": "Set an opening piece's height or door/window tag",
+    "description": "Store a height, or a door/window tag, on the wall-surface pieces drawn across an opening. Class wall_surface_with_opening is the ONLY class that carries these two fields: a plain wall, a room, or the opening itself is refused, for the height as much as for the tag. Get the ids from list_elements with cls set to wall_surface_with_opening. A floor plan carries no vertical dimension, so these pieces arrive with no height at all and every wall-surface figure computed from them falls back to a declared default. A height written here STAYS on the drawing and is read back instead of that default. The height is the USER's to give: pass the number and the unit they stated, never a standard, typical or assumed opening height, and never a bare number. If the user has not said how tall these are, ASK them for the figure; do not supply one and do not read one off the drawing's geometry. An opening's own tag is the mark printed on the sheet (W01, D10, 80/210) and the server reads heights out of it, so it is never rewritten from here: door and window are the only values accepted, and only on wall-surface opening pieces. One request per element, so pass the selection you mean. Refer to the blueprint by name.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "blueprint_id": {
+          "type": "string"
+        },
+        "project_id": {
+          "type": "string"
+        },
+        "ids": {
+          "description": "Local ids from list_elements, of class wall_surface_with_opening only. Any other class is refused.",
+          "minItems": 1,
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "height": {
+          "description": "The height the USER stated, counted in `height_unit`. Ask them for it rather than supplying a standard or assumed figure. Omit to leave heights alone.",
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "height_unit": {
+          "description": "Unit of `height`. Mandatory with it, because a bare number is not a dimension.",
+          "type": "string",
+          "enum": [
+            "mm",
+            "cm",
+            "m",
+            "in",
+            "ft"
+          ]
+        },
+        "tag": {
+          "description": "What the user says these pieces cross. Never read off the opening's size, and never copied from the mark printed on the sheet.",
+          "type": "string",
+          "enum": [
+            "door",
+            "window"
+          ]
+        }
+      },
+      "required": [
+        "blueprint_id",
+        "ids"
+      ],
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    }
+  },
+  "create_project": {
+    "title": "Create a project",
+    "description": "Create a new Kamai project to hold blueprints.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "description": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    }
+  },
+  "update_project": {
+    "title": "Rename a project",
+    "description": "Change a project's name or description.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "project_id": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "description": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "project_id"
+      ],
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    }
+  },
+  "list_jobs": {
+    "title": "Upload jobs of a project",
+    "description": "List a project's processing jobs, newest first — one per uploaded page, with status, progress and any error. Use it to see what is still running or why something failed. Refer to jobs by their filename, not by id.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "project_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "project_id"
+      ],
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    }
+  },
+  "get_job": {
+    "title": "One upload job",
+    "description": "Get one processing job's status, progress and error, if any.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "project_id": {
+          "type": "string"
+        },
+        "job_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "project_id",
+        "job_id"
+      ],
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    }
+  },
+  "cancel_job": {
+    "title": "Cancel an upload job",
+    "description": "Cancel a processing job that is still pending or running. A job that already finished or failed cannot be cancelled and is reported as such. Cancelling marks the job; work already in progress on the Kamai side may still run to completion.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "project_id": {
+          "type": "string"
+        },
+        "job_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "project_id",
+        "job_id"
+      ],
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    }
+  },
+  "request_blueprint_upload": {
+    "title": "Start a blueprint upload",
+    "description": "Step 1 of 2: request a pre-signed URL to upload a blueprint PDF.\n\nReturns `file_uuid`, `signed_url`, and `required_headers`. Send an HTTP PUT of the raw file bytes to `signed_url` with exactly the headers in `required_headers`, then call `finalize_blueprint_upload(file_uuid)` to validate the upload and start processing. Uses the user's Default Project when `project_id` is omitted.\n\nWhen telling the user which project the blueprint went to, say `project_name`. Never show a raw project id unless the user asks for it.\n\nCalled by the upload panel, which PUTs from the widget sandbox.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "filename": {
+          "type": "string"
+        },
+        "project_id": {
+          "type": "string"
+        },
+        "mime_type": {
+          "type": "string"
+        }
+      },
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "_meta": {
+      "ui": {
+        "visibility": [
+          "app"
+        ]
+      },
+      "openai/widgetAccessible": true
+    }
+  },
+  "finalize_blueprint_upload": {
+    "title": "Finish a blueprint upload",
+    "description": "Step 2 of 2: finalize a blueprint upload started with `request_blueprint_upload`.\n\nCall this after PUTting the file to the signed URL. Validates the uploaded file, files it under the project, and starts the processing pipeline. Returns the job_id, the project_id and the project_name.\n\nWhen telling the user where the blueprint landed, use `project_name`, not the id.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "file_uuid": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "file_uuid"
+      ],
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "_meta": {
+      "ui": {
+        "visibility": [
+          "app"
+        ]
+      },
+      "openai/widgetAccessible": true
+    }
+  },
+  "view_upload": {
+    "title": "Upload a blueprint",
+    "description": "Open an upload panel where the user can pick a blueprint PDF and watch it process. Use this whenever the user wants to upload, add or import a blueprint.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "project_id": {
+          "type": "string"
+        }
+      },
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "_meta": {
+      "ui": {
+        "resourceUri": "ui://kamai/upload@v27.html",
+        "visibility": [
+          "model",
+          "app"
+        ]
+      },
+      "openai/outputTemplate": "ui://kamai/upload@v27.html",
+      "openai/widgetAccessible": true,
+      "ui/resourceUri": "ui://kamai/upload@v27.html"
+    }
+  },
+  "ingest_blueprint_from_chat": {
+    "title": "Import an attached blueprint",
+    "description": "Ingest a blueprint PDF the user attached in this ChatGPT message and start processing.\n\nAttach the blueprint PDF to your message, then call this tool. Returns the job_id and project_id; uses the user's Default Project when project_id is omitted. ChatGPT web only.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "blueprint_file": {
+          "type": "object",
+          "properties": {
+            "download_url": {
+              "type": "string"
+            },
+            "file_id": {
+              "type": "string"
+            },
+            "mime_type": {
+              "type": "string"
+            },
+            "file_name": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "download_url",
+            "file_id"
+          ]
+        },
+        "project_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "blueprint_file"
+      ],
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "_meta": {
+      "openai/fileParams": [
+        "blueprint_file"
+      ]
+    }
+  },
+  "open_kamai": {
+    "title": "Open Kamai",
+    "description": "Open the Kamai app in a panel: browse projects and blueprints, view a plan with its detected rooms, walls and objects, and read the takeoff quantities. Use this when the user wants to see, open or work in Kamai.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "mode": {
+          "description": "Panel size to open in. Defaults to fullscreen; ChatGPT web does not honour pip.",
+          "type": "string",
+          "enum": [
+            "inline",
+            "fullscreen",
+            "pip"
+          ]
+        },
+        "expand_button": {
+          "description": "Show the fallback Expand button overlaid on the app. Default true.",
+          "type": "boolean"
+        },
+        "url": {
+          "description": "Which Kamai to open. One of: https://app.kamai.io. Defaults to the first, so a tunnelled dev build can be made the default via KAMAI_APP_ORIGINS without changing the call.",
+          "type": "string"
+        }
+      },
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "_meta": {
+      "ui": {
+        "resourceUri": "ui://kamai/iframetest@v27-b7e719.html",
+        "visibility": [
+          "model",
+          "app"
+        ]
+      },
+      "openai/outputTemplate": "ui://kamai/iframetest@v27-b7e719.html",
+      "openai/widgetAccessible": true,
+      "ui/resourceUri": "ui://kamai/iframetest@v27-b7e719.html"
+    }
+  }
+}

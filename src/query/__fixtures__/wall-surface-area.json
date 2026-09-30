@@ -1,0 +1,184 @@
+{
+  "project_id": "projEvalTower",
+  "project_name": "Eval Tower",
+  "method": "mixed",
+  "defaults": {
+    "room": "2.70 m",
+    "door": "2.10 m",
+    "window": "1.20 m"
+  },
+  "stated_heights": [
+    {
+      "kind": "room",
+      "value": 2.8,
+      "unit": "m",
+      "quote": "the rooms are 2.8 m high"
+    }
+  ],
+  "rooms": [
+    {
+      "ref": "se0951e:bath",
+      "id": "bath",
+      "blueprint_id": "bpEval_a",
+      "blueprint_name": "Ground Floor",
+      "name": "Net area: Bath",
+      "basis": "wall_faces",
+      "net_wall_area": "2.24 m²",
+      "gross_wall_area": "5.04 m²",
+      "opening_area": "2.80 m²",
+      "wall_run": "1.80 m",
+      "perimeter": "9.60 m",
+      "coverage_ratio": 0.188,
+      "perimeter_net_wall_area": "24.00 m²",
+      "room_height": "2.80 m",
+      "room_height_source": "user",
+      "defaulted_heights": [
+        "window"
+      ],
+      "openings_left_undeducted_count": 0,
+      "missing_opening_width_count": 0,
+      "assumed_window_count": 0,
+      "element_ids": {
+        "bpEval_a": [
+          "wf2",
+          "wf3"
+        ]
+      },
+      "element_count": 2,
+      "element_ids_truncated": false,
+      "opening_ids": {
+        "bpEval_a": [
+          "d3",
+          "w2"
+        ]
+      },
+      "opening_count": 2,
+      "opening_ids_truncated": false
+    },
+    {
+      "ref": "se0951e:kitchen",
+      "id": "kitchen",
+      "blueprint_id": "bpEval_a",
+      "blueprint_name": "Ground Floor",
+      "name": "Net area: Kitchen",
+      "basis": "wall_faces",
+      "net_wall_area": "9.10 m²",
+      "gross_wall_area": "11.20 m²",
+      "opening_area": "2.10 m²",
+      "wall_run": "4.00 m",
+      "perimeter": "18.00 m",
+      "coverage_ratio": 0.222,
+      "perimeter_net_wall_area": "42.93 m²",
+      "room_height": "2.80 m",
+      "room_height_source": "user",
+      "defaulted_heights": [
+        "door"
+      ],
+      "openings_left_undeducted_count": 3,
+      "missing_opening_width_count": 0,
+      "assumed_window_count": 0,
+      "note": "3 opening(s) of this room were not deducted: no wall-surface line crosses them and none runs over them, so their area was never counted into this room's wall run in the first place. If the drawing is wrong about that, this figure is high by their area.",
+      "element_ids": {
+        "bpEval_a": [
+          "wf1",
+          "d1"
+        ]
+      },
+      "element_count": 2,
+      "element_ids_truncated": false,
+      "opening_ids": {
+        "bpEval_a": [
+          "d1",
+          "d2",
+          "d3",
+          "w3"
+        ]
+      },
+      "opening_count": 4,
+      "opening_ids_truncated": false
+    },
+    {
+      "ref": "se0951e:living",
+      "id": "living",
+      "blueprint_id": "bpEval_a",
+      "blueprint_name": "Ground Floor",
+      "name": "Net area: Living",
+      "basis": "perimeter",
+      "net_wall_area": "45.31 m²",
+      "gross_wall_area": "54.88 m²",
+      "opening_area": "9.57 m²",
+      "wall_run": "19.60 m",
+      "perimeter": "19.60 m",
+      "room_height": "2.80 m",
+      "room_height_source": "user",
+      "defaulted_heights": [
+        "door",
+        "window"
+      ],
+      "openings_left_undeducted_count": 0,
+      "missing_opening_width_count": 0,
+      "assumed_window_count": 0,
+      "note": "This room has no wall-surface lines, so its wall area is measured from the room perimeter.",
+      "element_ids": {
+        "bpEval_a": [
+          "living",
+          "d1",
+          "d4",
+          "d5",
+          "w1"
+        ]
+      },
+      "element_count": 5,
+      "element_ids_truncated": false,
+      "opening_ids": {
+        "bpEval_a": [
+          "d1",
+          "d4",
+          "d5",
+          "w1"
+        ]
+      },
+      "opening_count": 4,
+      "opening_ids_truncated": false
+    },
+    {
+      "ref": "se0951e:mitbach",
+      "id": "mitbach",
+      "blueprint_id": "bpEval_a",
+      "blueprint_name": "Ground Floor",
+      "name": "Net area: מטבח",
+      "basis": "perimeter",
+      "net_wall_area": "31.36 m²",
+      "gross_wall_area": "31.36 m²",
+      "opening_area": "0.00 m²",
+      "wall_run": "11.20 m",
+      "perimeter": "11.20 m",
+      "room_height": "2.80 m",
+      "room_height_source": "user",
+      "defaulted_heights": [],
+      "openings_left_undeducted_count": 0,
+      "missing_opening_width_count": 0,
+      "assumed_window_count": 0,
+      "note": "This room has no wall-surface lines, so its wall area is measured from the room perimeter.",
+      "element_ids": {
+        "bpEval_a": [
+          "mitbach"
+        ]
+      },
+      "element_count": 1,
+      "element_ids_truncated": false,
+      "opening_ids": {},
+      "opening_count": 0,
+      "opening_ids_truncated": false
+    }
+  ],
+  "unknown_room_refs": [],
+  "skipped_non_rooms": 0,
+  "total": {
+    "net_wall_area": "88.01 m²",
+    "rooms_measured": 4,
+    "rooms_failed": 0
+  },
+  "notes": [],
+  "selection": "w1.eNoVjMEKwjAQRH9lmXMo6Ely7x94E5EUook0blyT9lDy7-6eZph5vAML_A1LnbewPgLuDgn-gDAXy2_nFuHRUiTbfhQk0nm6UKGUXwkO_ZObEkWrOrrSeo_hUHWtwm9TX3mPooSY9JnXFq0ZtcGfxh9CDCqX"
+}

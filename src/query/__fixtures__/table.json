@@ -1,0 +1,258 @@
+{
+  "project_id": "projEvalTower",
+  "project_name": "Eval Tower",
+  "source": "count",
+  "language": "en",
+  "blueprints": [
+    {
+      "blueprint_id": "bpEval_a",
+      "name": "Ground Floor"
+    },
+    {
+      "blueprint_id": "bpEval_b",
+      "name": "First Floor"
+    }
+  ],
+  "columns": [
+    {
+      "key": "folder",
+      "label": "Group",
+      "type": "text"
+    },
+    {
+      "key": "sub_class",
+      "label": "Type",
+      "type": "text"
+    },
+    {
+      "key": "tag",
+      "label": "Dimensions",
+      "type": "text"
+    },
+    {
+      "key": "count",
+      "label": "Count",
+      "type": "count",
+      "align": "right"
+    },
+    {
+      "key": "area",
+      "label": "Area",
+      "type": "area",
+      "align": "right"
+    },
+    {
+      "key": "perimeter",
+      "label": "Perimeter",
+      "type": "length",
+      "align": "right"
+    },
+    {
+      "key": "width",
+      "label": "Width",
+      "type": "text"
+    }
+  ],
+  "rows": [
+    {
+      "index": 0,
+      "cells": {
+        "folder": "Doors",
+        "sub_class": "double swing door",
+        "tag": "D4",
+        "count": 1,
+        "area": "0.20 m²",
+        "perimeter": "2.40 m",
+        "width": "120 cm wide"
+      },
+      "kind": "item",
+      "element_ids": {
+        "bpEval_a": [
+          "d4"
+        ]
+      },
+      "element_count": 1,
+      "element_ids_truncated": false,
+      "key": {
+        "folder": "Doors",
+        "sub_class": "double swing door",
+        "tag": "D4"
+      }
+    },
+    {
+      "index": 1,
+      "cells": {
+        "folder": "Doors",
+        "sub_class": "single swing door",
+        "tag": "D1",
+        "count": 1,
+        "area": "0.40 m²",
+        "perimeter": "2.80 m",
+        "width": "100 cm wide"
+      },
+      "kind": "item",
+      "element_ids": {
+        "bpEval_a": [
+          "d1"
+        ]
+      },
+      "element_count": 1,
+      "element_ids_truncated": false,
+      "key": {
+        "folder": "Doors",
+        "sub_class": "single swing door",
+        "tag": "D1"
+      }
+    },
+    {
+      "index": 2,
+      "cells": {
+        "folder": "Doors",
+        "sub_class": "single swing door",
+        "tag": "D2",
+        "count": 1,
+        "area": "0.20 m²",
+        "perimeter": "2.40 m",
+        "width": "90 cm wide"
+      },
+      "kind": "item",
+      "element_ids": {
+        "bpEval_a": [
+          "d2"
+        ]
+      },
+      "element_count": 1,
+      "element_ids_truncated": false,
+      "key": {
+        "folder": "Doors",
+        "sub_class": "single swing door",
+        "tag": "D2"
+      }
+    },
+    {
+      "index": 3,
+      "cells": {
+        "folder": "Doors",
+        "sub_class": "single swing door",
+        "tag": "D3",
+        "count": 1,
+        "area": "0.16 m²",
+        "perimeter": "2.00 m",
+        "width": "80 cm wide"
+      },
+      "kind": "item",
+      "element_ids": {
+        "bpEval_a": [
+          "d3"
+        ]
+      },
+      "element_count": 1,
+      "element_ids_truncated": false,
+      "key": {
+        "folder": "Doors",
+        "sub_class": "single swing door",
+        "tag": "D3"
+      }
+    },
+    {
+      "index": 4,
+      "cells": {
+        "folder": "Doors",
+        "sub_class": "sliding door",
+        "tag": "D5",
+        "count": 1,
+        "area": "0.30 m²",
+        "perimeter": "3.40 m",
+        "width": "150 cm wide"
+      },
+      "kind": "item",
+      "element_ids": {
+        "bpEval_a": [
+          "d5"
+        ]
+      },
+      "element_count": 1,
+      "element_ids_truncated": false,
+      "key": {
+        "folder": "Doors",
+        "sub_class": "sliding door",
+        "tag": "D5"
+      }
+    },
+    {
+      "index": 5,
+      "cells": {
+        "folder": "Root",
+        "sub_class": "single swing door",
+        "tag": null,
+        "count": 1,
+        "area": "3.88 SF",
+        "perimeter": "8.53 FT",
+        "width": "2' 11 1/2\" wide"
+      },
+      "kind": "item",
+      "element_ids": {
+        "bpEval_b": [
+          "d_wc"
+        ]
+      },
+      "element_count": 1,
+      "element_ids_truncated": false,
+      "key": {
+        "folder": "Root",
+        "sub_class": "single swing door",
+        "tag": null
+      }
+    },
+    {
+      "index": 6,
+      "cells": {
+        "folder": "Total",
+        "sub_class": null,
+        "tag": null,
+        "count": 6,
+        "area": null,
+        "perimeter": null,
+        "width": null
+      },
+      "kind": "total",
+      "element_ids": {
+        "bpEval_a": [
+          "d1",
+          "d2",
+          "d3",
+          "d4",
+          "d5"
+        ],
+        "bpEval_b": [
+          "d_wc"
+        ]
+      },
+      "element_count": 6,
+      "element_ids_truncated": false,
+      "key": {}
+    },
+    {
+      "index": 7,
+      "cells": {
+        "folder": "Roof: never processed, unknown, not zero"
+      },
+      "kind": "note",
+      "element_ids": {},
+      "element_count": 0,
+      "element_ids_truncated": false
+    },
+    {
+      "index": 8,
+      "cells": {
+        "folder": "These blueprints use different measurement systems, so there is no single total. Report each blueprint separately."
+      },
+      "kind": "note",
+      "element_ids": {},
+      "element_count": 0,
+      "element_ids_truncated": false
+    }
+  ],
+  "notes": [],
+  "problems": []
+}

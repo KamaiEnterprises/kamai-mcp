@@ -1,0 +1,81 @@
+{
+  "project_id": "projEvalTower",
+  "project_name": "Eval Tower",
+  "source": "count",
+  "language": "en",
+  "blueprints": [
+    {
+      "blueprint_id": "bpEval_a",
+      "name": "Ground Floor"
+    }
+  ],
+  "columns": [
+    {
+      "key": "folder",
+      "label": "Group",
+      "type": "text"
+    },
+    {
+      "key": "sub_class",
+      "label": "Type",
+      "type": "text"
+    },
+    {
+      "key": "tag",
+      "label": "Dimensions",
+      "type": "text"
+    },
+    {
+      "key": "count",
+      "label": "Count",
+      "type": "count",
+      "align": "right"
+    },
+    {
+      "key": "area",
+      "label": "Area",
+      "type": "area",
+      "align": "right"
+    },
+    {
+      "key": "perimeter",
+      "label": "Perimeter",
+      "type": "length",
+      "align": "right"
+    },
+    {
+      "key": "width",
+      "label": "Width",
+      "type": "text"
+    }
+  ],
+  "rows": [
+    {
+      "index": 2,
+      "cells": {
+        "folder": "Doors",
+        "sub_class": "single swing door",
+        "tag": "D2",
+        "count": 1,
+        "area": "0.20 m²",
+        "perimeter": "2.40 m",
+        "width": "90 cm wide"
+      },
+      "kind": "item",
+      "element_ids": {
+        "bpEval_a": [
+          "d2"
+        ]
+      },
+      "element_count": 1,
+      "element_ids_truncated": false,
+      "key": {
+        "folder": "Doors",
+        "sub_class": "single swing door",
+        "tag": "D2"
+      }
+    }
+  ],
+  "notes": [],
+  "problems": []
+}

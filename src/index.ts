@@ -10,6 +10,7 @@ import {
   RESOURCE_URL,
 } from "./config.ts";
 import { protectedResourceMetadata, requireBearer } from "./auth.ts";
+import { logEvent } from "./log.ts";
 import { buildServer } from "./server.ts";
 
 const app = express();
@@ -145,12 +146,72 @@ app.get("/.well-known/oauth-protected-resource/mcp", (_req, res) => {
 // re-initialise. ChatGPT also sends tools/call before initialize, which only a
 // session-less server can answer. Building per request binds the server to this
 // request's principal rather than to whoever opened the session.
-async function handleMcp(req: Request, res: Response): Promise<void> {
+// One line per tool call and resource read. A failed call is still HTTP 200 with the
+// failure in the JSON-RPC body, so the outcome is read off the wire: argument-validation
+// errors never reach a tool, and a guard can answer before the transport does.
+const OUTCOME_HEAD = 2048;
+
+function outcomeOf(head: string): { is_error: boolean | null; error: string | null } {
+  const line = head.split("\n").find((l) => l.startsWith("data:"));
+  const json = line ? line.slice(5).trim() : head.trim();
+  const error = /"error"\s*:\s*\{[^}]*?"message"\s*:\s*"((?:[^"\\]|\\.){0,200})/.exec(json);
+  if (error) return { is_error: true, error: error[1] ?? "" };
+  if (/"isError"\s*:\s*true/.test(json)) {
+    const text = /"text"\s*:\s*"((?:[^"\\]|\\.){0,200})/.exec(json);
+    return { is_error: true, error: text?.[1] ?? "" };
+  }
+  if (/^\{\s*"(result|jsonrpc)"/.test(json)) return { is_error: false, error: null };
+  return { is_error: null, error: null };
+}
+
+export function logMcpRequest(req: Request, res: Response, next: NextFunction): void {
+  const body = req.body as { method?: unknown; params?: { name?: unknown; uri?: unknown } } | undefined;
+  const method = typeof body?.method === "string" ? body.method : "";
+  if (method !== "tools/call" && method !== "resources/read") {
+    next();
+    return;
+  }
+  const target = method === "tools/call" ? body?.params?.name : body?.params?.uri;
+  const startedAt = Date.now();
+  let head = "";
+  const keep = (chunk: unknown) => {
+    if (head.length >= OUTCOME_HEAD) return;
+    if (typeof chunk === "string" || chunk instanceof Uint8Array) {
+      head = (head + Buffer.from(chunk).toString("utf8")).slice(0, OUTCOME_HEAD);
+    }
+  };
+  const write = res.write.bind(res) as (...args: unknown[]) => boolean;
+  const end = res.end.bind(res) as (...args: unknown[]) => Response;
+  (res as unknown as { write: (...args: unknown[]) => boolean }).write = (...args: unknown[]) => {
+    keep(args[0]);
+    return write(...args);
+  };
+  (res as unknown as { end: (...args: unknown[]) => Response }).end = (...args: unknown[]) => {
+    if (typeof args[0] !== "function") keep(args[0]);
+    return end(...args);
+  };
+  res.on("finish", () =>
+    logEvent("mcp_request", {
+      method,
+      target: typeof target === "string" ? target.slice(0, 200) : null,
+      uid: req.principal?.uid ?? null,
+      user_agent: (req.get("user-agent") ?? "").slice(0, 120),
+      status: res.statusCode,
+      ...outcomeOf(head),
+      ms: Date.now() - startedAt,
+    }),
+  );
+  next();
+}
+
+export async function handleMcp(req: Request, res: Response): Promise<void> {
   const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
   res.on("close", () => {
     void transport.close();
   });
-  const server = buildServer(req.principal!);
+  const userAgent = req.get("user-agent") ?? "";
+  // openai-mcp is ChatGPT's and Codex's connector; stateless, so the hint is per request.
+  const server = buildServer(req.principal!, { chatgpt: /\bopenai-mcp\//i.test(userAgent) });
   await server.connect(transport);
   await transport.handleRequest(req, res, req.body);
 }
@@ -166,7 +227,7 @@ function notOffered(_req: Request, res: Response): void {
   });
 }
 
-export const mcpGuards = [requireJson, parseJson, parserError, rejectBatch, boundResourceUri] as const;
+export const mcpGuards = [requireJson, parseJson, parserError, rejectBatch, logMcpRequest, boundResourceUri] as const;
 
 for (const path of [MCP_PATH, "/"]) {
   app.post(path, requireBearer, ...mcpGuards, handleMcp);

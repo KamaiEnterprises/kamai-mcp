@@ -1,0 +1,204 @@
+{
+  "project_id": "projEvalTower",
+  "project_name": "Eval Tower",
+  "language_sample": "מטבח",
+  "blueprints": [
+    {
+      "blueprint_id": "bpEval_a",
+      "name": "Ground Floor",
+      "state": "ready",
+      "status": "indexed",
+      "has_scale": true,
+      "scale_label": "1:100",
+      "scale_unconfirmed": false,
+      "units": "metric",
+      "words": 3,
+      "classes": {
+        "opening": {
+          "count": 8,
+          "sub_classes": {
+            "single swing door": 3,
+            "double swing door": 1,
+            "safe room window": 1,
+            "sliding door": 1,
+            "swing window": 1,
+            "window": 1
+          },
+          "folders": {
+            "Doors": 5,
+            "Windows": 3
+          }
+        },
+        "other": {
+          "count": 2,
+          "sub_classes": {
+            "sink": 1,
+            "toilet": 1
+          },
+          "folders": {
+            "Objects": 2
+          }
+        },
+        "room": {
+          "count": 4,
+          "sub_classes": {
+            "(none)": 3,
+            "wet room": 1
+          },
+          "folders": {
+            "Rooms": 4
+          }
+        },
+        "wall": {
+          "count": 3,
+          "sub_classes": {
+            "wet wall": 2,
+            "(none)": 1
+          },
+          "folders": {
+            "Type 2": 2,
+            "Type 1": 1
+          }
+        },
+        "wall_centerline": {
+          "count": 2,
+          "sub_classes": {
+            "(none)": 1,
+            "wet wall": 1
+          },
+          "folders": {
+            "Wall Centerlines": 2
+          }
+        },
+        "wall_surface": {
+          "count": 1,
+          "sub_classes": {
+            "(none)": 1
+          },
+          "folders": {
+            "Wall Surfaces": 1
+          }
+        },
+        "wall_surface_with_opening": {
+          "count": 2,
+          "sub_classes": {
+            "wet wall": 2
+          },
+          "folders": {
+            "Wall Surfaces": 2
+          }
+        }
+      },
+      "single_swing_doors": {
+        "total": 3,
+        "with_handing": 1
+      }
+    },
+    {
+      "blueprint_id": "bpEval_b",
+      "name": "First Floor",
+      "state": "ready",
+      "status": "indexed",
+      "has_scale": true,
+      "scale_label": "1\" = 8'-4\"",
+      "scale_unconfirmed": false,
+      "units": "imperial",
+      "words": 0,
+      "classes": {
+        "opening": {
+          "count": 2,
+          "sub_classes": {
+            "single swing door": 1,
+            "window": 1
+          },
+          "folders": {
+            "Root": 2
+          }
+        },
+        "other": {
+          "count": 1,
+          "sub_classes": {
+            "toilet": 1
+          },
+          "folders": {
+            "Root": 1
+          }
+        },
+        "room": {
+          "count": 2,
+          "sub_classes": {
+            "(none)": 1,
+            "wet room": 1
+          },
+          "folders": {
+            "Rooms": 2
+          }
+        },
+        "wall": {
+          "count": 1,
+          "sub_classes": {
+            "wet wall": 1
+          },
+          "folders": {
+            "Root": 1
+          }
+        }
+      },
+      "single_swing_doors": {
+        "total": 1,
+        "with_handing": 0
+      }
+    },
+    {
+      "blueprint_id": "bpEval_never",
+      "name": "Roof",
+      "state": "not_processed",
+      "status": "not_indexed",
+      "has_scale": true,
+      "scale_label": "1:100",
+      "scale_unconfirmed": false,
+      "units": "metric",
+      "words": null,
+      "classes": null,
+      "note": "Never processed: what this blueprint contains is unknown, not empty. Counts leave it out (excluded as not_indexed); never report it as having nothing on it."
+    },
+    {
+      "blueprint_id": "bpEval_unscaled",
+      "name": "Basement",
+      "state": "ready",
+      "status": "indexed",
+      "has_scale": false,
+      "scale_unconfirmed": false,
+      "words": 0,
+      "classes": {
+        "room": {
+          "count": 1,
+          "sub_classes": {
+            "(none)": 1
+          },
+          "folders": {
+            "Root": 1
+          }
+        },
+        "wall": {
+          "count": 1,
+          "sub_classes": {
+            "(none)": 1
+          },
+          "folders": {
+            "Root": 1
+          }
+        },
+        "wall_surface_with_opening": {
+          "count": 1,
+          "sub_classes": {
+            "(none)": 1
+          },
+          "folders": {
+            "Root": 1
+          }
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,480 @@
+{
+  "classes": [
+    "room",
+    "wall",
+    "wall_centerline",
+    "wall_surface",
+    "wall_surface_with_opening",
+    "opening",
+    "footprint",
+    "other"
+  ],
+  "sub_classes": [
+    "window",
+    "swing window",
+    "safe room window",
+    "single swing door",
+    "double swing door",
+    "sliding door",
+    "toilet",
+    "sink",
+    "bathtub",
+    "shower",
+    "cooktop",
+    "stairs",
+    "elevator",
+    "wet room",
+    "wet wall"
+  ],
+  "kinds": [
+    "area",
+    "line",
+    "object",
+    "text",
+    "folder"
+  ],
+  "handing": [
+    "LH",
+    "RH",
+    "LHR",
+    "RHR"
+  ],
+  "disciplines": [
+    {
+      "letter": "A",
+      "name": "Architectural"
+    },
+    {
+      "letter": "B",
+      "name": "Geotechnical"
+    },
+    {
+      "letter": "C",
+      "name": "Civil"
+    },
+    {
+      "letter": "D",
+      "name": "Process"
+    },
+    {
+      "letter": "E",
+      "name": "Electrical"
+    },
+    {
+      "letter": "F",
+      "name": "Fire Protection"
+    },
+    {
+      "letter": "G",
+      "name": "General"
+    },
+    {
+      "letter": "H",
+      "name": "Hazardous Materials"
+    },
+    {
+      "letter": "I",
+      "name": "Interiors"
+    },
+    {
+      "letter": "L",
+      "name": "Landscape"
+    },
+    {
+      "letter": "M",
+      "name": "Mechanical"
+    },
+    {
+      "letter": "O",
+      "name": "Operations"
+    },
+    {
+      "letter": "P",
+      "name": "Plumbing"
+    },
+    {
+      "letter": "Q",
+      "name": "Equipment"
+    },
+    {
+      "letter": "R",
+      "name": "Resource"
+    },
+    {
+      "letter": "S",
+      "name": "Structural"
+    },
+    {
+      "letter": "T",
+      "name": "Telecommunications"
+    },
+    {
+      "letter": "V",
+      "name": "Survey/Mapping"
+    },
+    {
+      "letter": "W",
+      "name": "Distributed Energy"
+    },
+    {
+      "letter": "X",
+      "name": "Other Disciplines"
+    },
+    {
+      "letter": "Z",
+      "name": "Contractor/Shop Drawings"
+    }
+  ],
+  "categories": {
+    "doors": {
+      "where": {
+        "all": [
+          {
+            "field": "class",
+            "op": "eq",
+            "value": "opening"
+          },
+          {
+            "field": "sub_class",
+            "op": "in",
+            "value": [
+              "double swing door",
+              "single swing door",
+              "sliding door"
+            ]
+          }
+        ]
+      },
+      "include_text": false,
+      "sub_classes_allowed": [
+        "double swing door",
+        "single swing door",
+        "sliding door"
+      ]
+    },
+    "windows": {
+      "where": {
+        "all": [
+          {
+            "field": "class",
+            "op": "eq",
+            "value": "opening"
+          },
+          {
+            "field": "sub_class",
+            "op": "in",
+            "value": [
+              "safe room window",
+              "swing window",
+              "window"
+            ]
+          }
+        ]
+      },
+      "include_text": false,
+      "sub_classes_allowed": [
+        "safe room window",
+        "swing window",
+        "window"
+      ]
+    },
+    "openings": {
+      "where": {
+        "field": "class",
+        "op": "eq",
+        "value": "opening"
+      },
+      "include_text": false,
+      "sub_classes_allowed": [
+        "double swing door",
+        "safe room window",
+        "single swing door",
+        "sliding door",
+        "swing window",
+        "window"
+      ]
+    },
+    "opening_pieces": {
+      "where": {
+        "field": "class",
+        "op": "eq",
+        "value": "wall_surface_with_opening"
+      },
+      "include_text": false,
+      "sub_classes_allowed": [
+        "wet wall"
+      ]
+    },
+    "rooms": {
+      "where": {
+        "field": "class",
+        "op": "eq",
+        "value": "room"
+      },
+      "include_text": false,
+      "sub_classes_allowed": [
+        "wet room"
+      ]
+    },
+    "wet_rooms": {
+      "where": {
+        "all": [
+          {
+            "field": "class",
+            "op": "eq",
+            "value": "room"
+          },
+          {
+            "field": "sub_class",
+            "op": "eq",
+            "value": "wet room"
+          }
+        ]
+      },
+      "include_text": false,
+      "sub_classes_allowed": []
+    },
+    "walls": {
+      "where": {
+        "field": "class",
+        "op": "eq",
+        "value": "wall"
+      },
+      "include_text": false,
+      "sub_classes_allowed": [
+        "wet wall"
+      ]
+    },
+    "wet_walls": {
+      "where": {
+        "all": [
+          {
+            "field": "class",
+            "op": "eq",
+            "value": "wall"
+          },
+          {
+            "field": "sub_class",
+            "op": "eq",
+            "value": "wet wall"
+          }
+        ]
+      },
+      "include_text": false,
+      "sub_classes_allowed": []
+    },
+    "wall_centerlines": {
+      "where": {
+        "field": "class",
+        "op": "eq",
+        "value": "wall_centerline"
+      },
+      "include_text": false,
+      "sub_classes_allowed": [
+        "wet wall"
+      ]
+    },
+    "wall_surfaces": {
+      "where": {
+        "field": "class",
+        "op": "in",
+        "value": [
+          "wall_surface",
+          "wall_surface_with_opening"
+        ]
+      },
+      "include_text": false,
+      "sub_classes_allowed": [
+        "wet wall"
+      ]
+    },
+    "fixtures": {
+      "where": {
+        "all": [
+          {
+            "field": "class",
+            "op": "eq",
+            "value": "other"
+          },
+          {
+            "field": "sub_class",
+            "op": "in",
+            "value": [
+              "bathtub",
+              "cooktop",
+              "shower",
+              "sink",
+              "toilet"
+            ]
+          }
+        ]
+      },
+      "include_text": false,
+      "sub_classes_allowed": [
+        "bathtub",
+        "cooktop",
+        "shower",
+        "sink",
+        "toilet"
+      ]
+    },
+    "footprint": {
+      "where": {
+        "field": "class",
+        "op": "eq",
+        "value": "footprint"
+      },
+      "include_text": false,
+      "sub_classes_allowed": []
+    },
+    "text": {
+      "where": {
+        "field": "kind",
+        "op": "eq",
+        "value": "text"
+      },
+      "include_text": true,
+      "sub_classes_allowed": []
+    }
+  },
+  "group_by": [
+    "blueprint_id",
+    "folder",
+    "folder_path",
+    "class",
+    "sub_class",
+    "tag",
+    "handing",
+    "kind",
+    "name",
+    "color",
+    "blueprint_discipline"
+  ],
+  "order_by": [
+    "area_m2",
+    "perimeter_m",
+    "length_m",
+    "width_m",
+    "name",
+    "tag",
+    "handing",
+    "class",
+    "sub_class",
+    "blueprint_discipline",
+    "updated_at"
+  ],
+  "fields": [
+    {
+      "name": "kind",
+      "kind": "enum",
+      "doc": "area | line | object | text | folder"
+    },
+    {
+      "name": "class",
+      "kind": "enum",
+      "doc": "room | wall | wall_centerline | wall_surface | wall_surface_with_opening | opening | footprint | other"
+    },
+    {
+      "name": "sub_class",
+      "kind": "enum",
+      "doc": "'wet room', 'wet wall', 'single swing door', 'window', 'toilet' … null = unclassified"
+    },
+    {
+      "name": "blueprint_discipline",
+      "kind": "enum",
+      "doc": "NCS5 letter: A Architectural, S Structural, M Mechanical, E Electrical, …; null on sheets ingested before this field existed"
+    },
+    {
+      "name": "name",
+      "kind": "text",
+      "doc": "the element's label"
+    },
+    {
+      "name": "tag",
+      "kind": "text",
+      "doc": "drawing mark, e.g. 'D1'"
+    },
+    {
+      "name": "handing",
+      "kind": "enum",
+      "doc": "LH | RH | LHR | RHR, single swing doors only. LH/RH: the hinge side seen from the side the door swings away from, read off the drawing. LHR/RHR: the reverse (pull-side) handings, present only when a client stored them. null where undecided or not a swing door"
+    },
+    {
+      "name": "folder",
+      "kind": "text",
+      "doc": "the immediate parent folder's name; top-level features carry 'Root'; `folder_path` is null at the root"
+    },
+    {
+      "name": "ref",
+      "kind": "text",
+      "doc": "a `ref` from an earlier result; eq / ne / in / not_in only. A ref on a sheet outside `sheets` is an error; a well-formed ref that names no element on its sheet matches nothing"
+    },
+    {
+      "name": "color",
+      "kind": "number",
+      "doc": "packed RGBA integer"
+    },
+    {
+      "name": "is_user_drawn",
+      "kind": "bool",
+      "doc": "drawn by hand, not detected"
+    },
+    {
+      "name": "confidence",
+      "kind": "number",
+      "doc": "text only: 1.0 digital, lower OCR"
+    },
+    {
+      "name": "updated_at",
+      "kind": "time",
+      "doc": "last write"
+    },
+    {
+      "name": "area_m2",
+      "kind": "measure",
+      "doc": "polygons only; null for lines"
+    },
+    {
+      "name": "length_m",
+      "kind": "measure",
+      "doc": "lines only; null for polygons"
+    },
+    {
+      "name": "perimeter_m",
+      "kind": "measure",
+      "doc": "polygons only"
+    },
+    {
+      "name": "width_m",
+      "kind": "measure",
+      "doc": "clear width; openings only"
+    }
+  ],
+  "operators": [
+    "eq",
+    "ne",
+    "in",
+    "not_in",
+    "is_null",
+    "not_null",
+    "contains",
+    "starts_with",
+    "gt",
+    "gte",
+    "lt",
+    "lte",
+    "between"
+  ],
+  "limits": {
+    "where_max_chars": 4096,
+    "where_max_nodes": 64,
+    "in_list_max_values": 500,
+    "near_max_metres": 50.0,
+    "blueprints_per_call": 25,
+    "rows_per_page": 200,
+    "groups_per_result": 200,
+    "rooms_per_wall_surface_call": 200,
+    "selections_per_table": 5,
+    "queries_in_flight_per_user": 3
+  }
+}
