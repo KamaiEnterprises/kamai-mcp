@@ -1,0 +1,235 @@
+{
+  "project_id": "projEvalTower",
+  "project_name": "Eval Tower",
+  "source": "wall_surface",
+  "language": "en",
+  "blueprints": [
+    {
+      "blueprint_id": "bpEval_a",
+      "name": "Ground Floor"
+    }
+  ],
+  "columns": [
+    {
+      "key": "room",
+      "label": "Room name",
+      "type": "text"
+    },
+    {
+      "key": "wall_faces",
+      "label": "Wall faces (m)",
+      "type": "number",
+      "unit": "m"
+    },
+    {
+      "key": "perimeter",
+      "label": "Perimeter (m)",
+      "type": "number",
+      "unit": "m"
+    },
+    {
+      "key": "height",
+      "label": "Height (m)",
+      "type": "number",
+      "unit": "m"
+    },
+    {
+      "key": "openings",
+      "label": "Openings deducted (m²)",
+      "type": "number",
+      "unit": "m²"
+    },
+    {
+      "key": "wall_surface",
+      "label": "Net wall surface area (m²)",
+      "type": "number",
+      "unit": "m²"
+    },
+    {
+      "key": "coverage",
+      "label": "Coverage",
+      "type": "number"
+    }
+  ],
+  "rows": [
+    {
+      "index": 0,
+      "cells": {
+        "room": "Bath",
+        "height": 2.8,
+        "openings": 2.8,
+        "wall_surface": 2.24,
+        "wall_faces": 1.8,
+        "perimeter": "",
+        "coverage": 0.19
+      },
+      "kind": "item",
+      "element_ids": {
+        "bpEval_a": [
+          "wf2",
+          "wf3"
+        ]
+      },
+      "element_count": 2,
+      "element_ids_truncated": false,
+      "key": {
+        "ref": "se0951e:bath"
+      }
+    },
+    {
+      "index": 1,
+      "cells": {
+        "room": "Kitchen",
+        "height": 2.8,
+        "openings": 2.1,
+        "wall_surface": 9.1,
+        "wall_faces": 4.0,
+        "perimeter": "",
+        "coverage": 0.22
+      },
+      "kind": "item",
+      "element_ids": {
+        "bpEval_a": [
+          "wf1",
+          "d1"
+        ]
+      },
+      "element_count": 2,
+      "element_ids_truncated": false,
+      "key": {
+        "ref": "se0951e:kitchen"
+      }
+    },
+    {
+      "index": 2,
+      "cells": {
+        "room": "Living",
+        "height": 2.8,
+        "openings": 9.57,
+        "wall_surface": 45.31,
+        "wall_faces": "",
+        "perimeter": 19.6,
+        "coverage": ""
+      },
+      "kind": "item",
+      "element_ids": {
+        "bpEval_a": [
+          "living",
+          "d1",
+          "d4",
+          "d5",
+          "w1"
+        ]
+      },
+      "element_count": 5,
+      "element_ids_truncated": false,
+      "key": {
+        "ref": "se0951e:living"
+      }
+    },
+    {
+      "index": 3,
+      "cells": {
+        "room": "מטבח",
+        "height": 2.8,
+        "openings": 0.0,
+        "wall_surface": 31.36,
+        "wall_faces": "",
+        "perimeter": 11.2,
+        "coverage": ""
+      },
+      "kind": "item",
+      "element_ids": {
+        "bpEval_a": [
+          "mitbach"
+        ]
+      },
+      "element_count": 1,
+      "element_ids_truncated": false,
+      "key": {
+        "ref": "se0951e:mitbach"
+      }
+    },
+    {
+      "index": 4,
+      "cells": {
+        "room": "Total",
+        "height": "",
+        "openings": 14.47,
+        "wall_surface": 88.01,
+        "wall_faces": 5.8,
+        "perimeter": 30.8,
+        "coverage": ""
+      },
+      "kind": "total",
+      "element_ids": {
+        "bpEval_a": [
+          "wf2",
+          "wf3",
+          "wf1",
+          "d1",
+          "living",
+          "d4",
+          "d5",
+          "w1",
+          "mitbach"
+        ]
+      },
+      "element_count": 9,
+      "element_ids_truncated": false,
+      "key": {}
+    },
+    {
+      "index": 5,
+      "cells": {
+        "room": "No wall faces on this sheet for these rooms, so they are measured by room perimeter: Living, מטבח."
+      },
+      "kind": "note",
+      "element_ids": {},
+      "element_count": 0,
+      "element_ids_truncated": false
+    },
+    {
+      "index": 6,
+      "cells": {
+        "room": "This table mixes two bases: 2 rooms measured on wall faces, 2 rooms by room perimeter."
+      },
+      "kind": "note",
+      "element_ids": {},
+      "element_count": 0,
+      "element_ids_truncated": false
+    },
+    {
+      "index": 7,
+      "cells": {
+        "room": "Door height 2.1 m is the tool default where the drawing states none, deducted in: Kitchen, Living."
+      },
+      "kind": "note",
+      "element_ids": {},
+      "element_count": 0,
+      "element_ids_truncated": false
+    },
+    {
+      "index": 8,
+      "cells": {
+        "room": "Window height 1.2 m is the tool default where the drawing states none, deducted in: Bath, Living."
+      },
+      "kind": "note",
+      "element_ids": {},
+      "element_count": 0,
+      "element_ids_truncated": false
+    },
+    {
+      "index": 9,
+      "cells": {
+        "room": "Give the real opening height, or say whether these are doors or windows, and it can be stored on those openings with set_opening_height, so later calculations read it off the drawing instead of defaulting."
+      },
+      "kind": "note",
+      "element_ids": {},
+      "element_count": 0,
+      "element_ids_truncated": false
+    }
+  ],
+  "notes": [],
+  "problems": []
+}

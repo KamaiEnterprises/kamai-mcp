@@ -4,7 +4,7 @@ import { ChevronDown, ChevronRight, FileText, FolderOpen, LoaderCircle } from "l
 import { callTool, updateModelContext } from "./bridge";
 import { asArray, blueprintName, isBlueprintReady, relativeTime } from "./format";
 import { BlueprintPanel } from "./BlueprintWidget";
-import { BrandHeader, Card, EmptyState, LoadingState, PlanCardArtwork, StatusBadge } from "./shared";
+import { ActionError, BrandHeader, Card, EmptyState, LoadingState, PlanCardArtwork, StatusBadge } from "./shared";
 import type { BlueprintData, BlueprintSummary, ProjectsData, ProjectSummary } from "./types";
 import { useWidgetData } from "./useWidgetData";
 
@@ -82,7 +82,7 @@ export function ProjectsWidget({ data: provided }: { data?: ProjectsData | Proje
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [selected, setSelected] = useState<BlueprintData | null>(null);
   const [loadingBlueprint, setLoadingBlueprint] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<unknown>(null);
 
   if (!data) return <LoadingState label="Loading projects…" />;
   if (selected) return <BlueprintPanel initialData={selected} onBack={() => setSelected(null)} />;
@@ -111,7 +111,7 @@ export function ProjectsWidget({ data: provided }: { data?: ProjectsData | Proje
         `Selected blueprint: ${blueprintName(blueprint)}\nProject: ${project.name}\nBlueprint id: ${blueprint.id}\nProject id: ${project.id}`,
       );
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Could not open this blueprint.");
+      setError(reason instanceof Error ? reason : new Error("Could not open this blueprint."));
     } finally {
       setLoadingBlueprint(null);
     }
@@ -123,7 +123,7 @@ export function ProjectsWidget({ data: provided }: { data?: ProjectsData | Proje
         title="Projects"
         subtitle={projects.length === 1 ? "1 Kamai project" : `${projects.length} Kamai projects`}
       />
-      {error && <div className="alert alert-error mb-3 py-2 text-sm">{error}</div>}
+      <ActionError error={error} className="mb-3" />
       {projects.length ? (
         <div className="grid grid-cols-[repeat(auto-fit,minmax(240px,1fr))] items-start gap-4">
           {projects.map((project) => (

@@ -49,6 +49,7 @@ export type BlueprintState = "ready" | "processing" | "failed";
 
 export interface GeometryFeature {
   i: number;
+  id?: string | null;
   cls: string;
   name: string;
   color?: Rgba;
@@ -89,6 +90,9 @@ export interface BlueprintData {
   needs_scale?: boolean;
   scale_unconfirmed?: boolean;
   units?: Units;
+  // Present only on the model-facing summary a host without structuredContent forwards.
+  classes?: { cls: string; count: number }[];
+  features_shown?: number;
 }
 
 export interface TakeoffRow {
@@ -141,4 +145,64 @@ export interface UploadResult {
   project_name?: string | null;
   filename?: string | null;
   status?: string | null;
+}
+
+export type IdMap = Record<string, string[]>;
+
+export interface TableColumn {
+  key: string;
+  label: string;
+  type?: string | null;
+  unit?: string | null;
+  align?: string | null;
+}
+
+export interface TableRow {
+  index?: number;
+  cells: Record<string, string | number | null>;
+  kind?: string;
+  element_count: number;
+  element_ids?: IdMap;
+  element_ids_truncated?: boolean;
+  from?: { s: number; group?: Record<string, string | null> };
+  /** A Kamai-built row's identity (group_by values or {ref}); absent on a note row. */
+  key?: Record<string, string | null> | null;
+}
+
+export interface TableData {
+  project_id: string;
+  project_name?: string | null;
+  title: string;
+  built_by?: string;
+  language?: string;
+  blueprints?: Array<{ blueprint_id: string; name?: string | null }>;
+  columns: TableColumn[];
+  rows: TableRow[];
+  selection?: string;
+  selections?: string[];
+  notes?: string[];
+  problems?: Array<{ row: number; reason: string }>;
+}
+
+export interface RowElements {
+  element_ids: IdMap;
+  element_count: number;
+  element_ids_truncated: boolean;
+  problem?: string;
+}
+
+export interface OutlinesPage {
+  blueprint_id: string;
+  grid: number;
+  features: GeometryFeature[];
+  missing: string[];
+  omitted?: string[];
+}
+
+/** Elements a table row lights up on the plan: their ids, and outlines fetched for them
+ * (the plan's own page may not hold them all). */
+export interface Highlight {
+  ids: ReadonlySet<string>;
+  outlines: GeometryFeature[];
+  grid: number;
 }

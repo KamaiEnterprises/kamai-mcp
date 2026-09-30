@@ -4,7 +4,9 @@ import { resolve } from "node:path";
 import tailwindcss from "@tailwindcss/vite";
 import { build } from "vite";
 
-const names = ["projects", "blueprint", "takeoff", "upload", "iframetest"];
+import { entitySafe } from "./entity-safe.mjs";
+
+const names = ["projects", "blueprint", "takeoff", "upload", "iframetest", "table"];
 const root = resolve("src/widgets/app");
 const output = resolve("dist/widgets");
 const temporary = resolve("dist/.widget-build");
@@ -48,13 +50,15 @@ for (const name of names) {
 
   const scriptPath = resolve(temporary, script[1].replace(/^\.\//, ""));
   const stylePath = resolve(temporary, stylesheet[1].replace(/^\.\//, ""));
-  const javascript = (await readFile(scriptPath, "utf8")).replace(/<\/script/gi, "<\\/script");
+  const javascript = entitySafe(name, await readFile(scriptPath, "utf8")).replace(/<\/script/gi, "<\\/script");
   const css = (await readFile(stylePath, "utf8")).replace(/<\/style/gi, "<\\/style");
 
   html = html
     .replace(script[0], () => `<script type="module">${javascript}</script>`)
     .replace(stylesheet[0], () => `<style>${css}</style>`)
     .replace("<title>Kamai Widget</title>", `<title>Kamai ${name}</title>`);
+
+  if (/&[A-Za-z#]/.test(html)) throw new Error(`${name} widget: entity-like text survived`);
 
   if (html.includes('src="./assets/') || html.includes('href="./assets/')) {
     throw new Error(`External assets remain in ${name} widget`);

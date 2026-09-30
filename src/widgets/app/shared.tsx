@@ -1,7 +1,8 @@
-import type { ButtonHTMLAttributes, ReactNode } from "react";
+import { useState, type ButtonHTMLAttributes, type MouseEvent, type ReactNode } from "react";
 import {
   AlertTriangle,
   Check,
+  ExternalLink,
   FileText,
   FolderOpen,
   LoaderCircle,
@@ -9,6 +10,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 
+import { HostCannotCallTools, openLink } from "./bridge";
 import { TERMINAL_BAD } from "./format";
 import type { JobSummary } from "./types";
 
@@ -187,6 +189,76 @@ export function PlanCardArtwork({ count }: { count: number }) {
       <span className="badge badge-sm absolute left-3 top-3 bg-white text-black shadow-sm">
         {count === 1 ? "1 file" : `${count} files`}
       </span>
+    </div>
+  );
+}
+
+export const KAMAI_APP_URL = "https://app.kamai.io";
+
+// An opaque-origin sandbox (Open WebUI's embeds) hands its sandbox to every tab it opens,
+// window.open and target=_blank alike, and app.kamai.io is blank there: its module scripts
+// are CORS-blocked from origin null. Only a modified or middle click on a real <a> leaves
+// the sandbox (measured in Chromium 2026-09-24), so a plain click shows how instead.
+export const restrictedFrame = () => window.origin === "null";
+
+export function OpenKamai({
+  href = KAMAI_APP_URL,
+  label = "Open Kamai",
+  variant = "primary",
+  size = "sm",
+}: {
+  href?: string;
+  label?: string;
+  variant?: keyof typeof buttonVariants;
+  size?: "xs" | "sm" | "md";
+}) {
+  const [hint, setHint] = useState(false);
+  if (!restrictedFrame()) {
+    return (
+      <Button variant={variant} size={size} icon={ExternalLink} onClick={() => void openLink(href)}>
+        {label}
+      </Button>
+    );
+  }
+  const sizeClass = size === "xs" ? "btn-xs" : size === "sm" ? "btn-sm" : "";
+  const onClick = (event: MouseEvent<HTMLAnchorElement>) => {
+    if (event.ctrlKey || event.metaKey || event.shiftKey) return;
+    event.preventDefault();
+    setHint(true);
+  };
+  return (
+    <span className="inline-flex flex-col items-center gap-1.5">
+      <a
+        href={href}
+        target="_blank"
+        rel="noopener noreferrer"
+        onClick={onClick}
+        className={`btn ${buttonVariants[variant]} ${sizeClass} gap-1.5 rounded-full`}
+      >
+        <ExternalLink className="h-4 w-4" />
+        {label}
+      </a>
+      <span className={`text-xs ${hint ? "font-medium text-base-content" : "text-base-content/60"}`}>
+        {hint
+          ? "This chat would open Kamai blank. Hold Ctrl (⌘ on Mac) and click, or middle-click."
+          : "Ctrl-click (⌘-click on Mac) or middle-click to open"}
+      </span>
+      <span className="select-all break-all text-xs text-base-content/50">{href}</span>
+    </span>
+  );
+}
+
+/** An action error, with the way out when the host cannot run Kamai actions at all. */
+export function ActionError({ error, className = "" }: { error: unknown; className?: string }) {
+  if (!error) return null;
+  const silent = error instanceof HostCannotCallTools;
+  const message = error instanceof Error ? error.message : String(error);
+  return (
+    <div className={`alert ${silent ? "alert-info" : "alert-error"} py-2 text-sm ${className}`}>
+      <span>{message}</span>
+      {silent && (
+        <OpenKamai size="xs" />
+      )}
     </div>
   );
 }

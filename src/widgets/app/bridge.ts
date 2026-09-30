@@ -1,3 +1,5 @@
+import { parseInjectedToolResult, parseToolResultParams } from "./tool-result";
+
 type JsonRecord = Record<string, unknown>;
 type Renderer = (data: unknown) => void;
 
@@ -24,6 +26,9 @@ declare global {
   interface Window {
     openai?: OpenAiBridge;
     __KAMAI_BOOTSTRAP__?: unknown;
+    // Open WebUI's MCP App Bridge injects the tool result JSON here before the
+    // synthetic ui/notifications/tool-result fires (and as a fallback if it does not).
+    __MCP_TOOL_RESULT__?: unknown;
   }
 }
 
@@ -65,6 +70,9 @@ let latest: unknown;
 let hasDelivered = false;
 let started = false;
 let ready = false;
+// A host that renders us but will never answer ui/* or tools/call. Asking it anyway costs
+// the user a 20 s wait that ends in "timeout: tools/call".
+let silentHost = false;
 const pending = new Map<number, { resolve: (value: unknown) => void; reject: (error: Error) => void }>();
 
 function post(message: RpcMessage): void {
@@ -133,7 +141,8 @@ window.addEventListener("message", (event: MessageEvent<RpcMessage>) => {
   }
 
   if (message.method === "ui/notifications/tool-result") {
-    deliver(message.params?.structuredContent);
+    const payload = parseToolResultParams(message.params);
+    if (payload !== undefined) deliver(payload);
   }
   // params IS the partial host context — McpUiHostContextChangedNotification declares
   // `params: McpUiHostContext`, with no wrapper object. Reading params.hostContext
@@ -160,6 +169,9 @@ export function reportSize(): void {
   if (!sizeReporting) return;
   const height = Math.max(document.documentElement.scrollHeight, document.body.scrollHeight, 1);
   notify("ui/notifications/size-changed", { width: 0, height });
+  // Open WebUI sizes an embed only from its own message, and the bridge's observer for it
+  // is attached to a document.body that does not exist yet, so a frame never grows after load.
+  if (silentHost) window.parent.postMessage({ type: "iframe:height", height }, "*");
 }
 
 export function init(render: Renderer): () => void {
@@ -168,6 +180,10 @@ export function init(render: Renderer): () => void {
   // everyone else, which would re-render them for nothing.
   if (hasDelivered) render(latest);
   else if (window.__KAMAI_BOOTSTRAP__ !== undefined) deliver(window.__KAMAI_BOOTSTRAP__);
+  else {
+    const injected = parseInjectedToolResult(window.__MCP_TOOL_RESULT__);
+    if (injected !== undefined) deliver(injected);
+  }
   const unsubscribe = () => {
     renderers.delete(render);
   };
@@ -181,8 +197,9 @@ export function init(render: Renderer): () => void {
     setDisplayMode((window.openai as unknown as JsonRecord | undefined)?.displayMode);
     const openaiResult = window.openai?.toolOutput ?? window.openai?.toolResponse;
     if (openaiResult && typeof openaiResult === "object") {
-      const record = openaiResult as JsonRecord;
-      deliver(record.structuredContent ?? record);
+      const payload = parseToolResultParams(openaiResult as JsonRecord);
+      if (payload !== undefined) deliver(payload);
+      else deliver(unwrap(openaiResult));
     }
   });
   // The globals event only fires on changes. A widget loaded straight into
@@ -191,6 +208,20 @@ export function init(render: Renderer): () => void {
 
   if (window.parent === window && !window.openai) {
     ready = true;
+    reportSize();
+    return unsubscribe;
+  }
+
+  // Open WebUI's MCP App Bridge injects the result and does not speak ui/* RPC.
+  // Waiting on ui/initialize there burns the 20s RPC timeout for nothing.
+  if (window.__MCP_TOOL_RESULT__ !== undefined && !window.openai) {
+    ready = true;
+    silentHost = true;
+    if (window.ResizeObserver) {
+      const observer = new ResizeObserver(reportSize);
+      observer.observe(document.documentElement);
+      if (document.body) observer.observe(document.body);
+    }
     reportSize();
     return unsubscribe;
   }
@@ -213,15 +244,19 @@ export function init(render: Renderer): () => void {
       applyTheme(hostContext);
       setDisplayMode(hostContext.displayMode);
       const toolResult = result?.toolResult as JsonRecord | undefined;
-      if (toolResult) deliver(toolResult.structuredContent);
+      const initialPayload = parseToolResultParams(toolResult);
+      if (initialPayload !== undefined) deliver(initialPayload);
     } catch (error) {
       console.warn("[kamai-widget] ui/initialize failed", error);
+      ready = true;
+      silentHost = true;
     }
 
     const openaiResult = window.openai?.toolOutput ?? window.openai?.toolResponse;
     if (openaiResult && typeof openaiResult === "object") {
-      const record = openaiResult as JsonRecord;
-      deliver(record.structuredContent ?? record);
+      const payload = parseToolResultParams(openaiResult as JsonRecord);
+      if (payload !== undefined) deliver(payload);
+      else deliver(unwrap(openaiResult));
     }
   })();
 
@@ -234,21 +269,24 @@ export function init(render: Renderer): () => void {
 
 function toolPayload(result: unknown): unknown {
   if (!result || typeof result !== "object") return result;
-  const record = result as JsonRecord;
-  if (record.structuredContent) return unwrap(record.structuredContent);
-  const block = Array.isArray(record.content) ? record.content[0] : null;
-  if (block && typeof block === "object" && typeof (block as JsonRecord).text === "string") {
-    try {
-      return unwrap(JSON.parse((block as JsonRecord).text as string));
-    } catch {
-      return result;
-    }
+  const parsed = parseToolResultParams(result as JsonRecord);
+  return parsed !== undefined ? parsed : unwrap(result);
+}
+
+export class HostCannotCallTools extends Error {
+  constructor() {
+    super("This chat can show Kamai but cannot run Kamai actions. Open Kamai to continue.");
+    this.name = "HostCannotCallTools";
   }
-  return unwrap(result);
+}
+
+export function hostCanCallTools(): boolean {
+  return Boolean(window.openai?.callTool) || !silentHost;
 }
 
 export async function callTool<T>(name: string, args: JsonRecord = {}): Promise<T> {
   if (window.openai?.callTool) return toolPayload(await window.openai.callTool(name, args)) as T;
+  if (silentHost) throw new HostCannotCallTools();
   return toolPayload(await rpc("tools/call", { name, arguments: args })) as T;
 }
 
@@ -342,6 +380,7 @@ export function isReady(): boolean {
 // is a deliberate "take me to the app" action, not something we do on our own.
 export function openLink(href: string): Promise<unknown> {
   if (window.openai?.openExternal) return window.openai.openExternal({ href });
+  if (silentHost) return Promise.resolve(window.open(href, "_blank"));
   return rpc("ui/open-link", { url: href }).catch(() => window.open(href, "_blank"));
 }
 

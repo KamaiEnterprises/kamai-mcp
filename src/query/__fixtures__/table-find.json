@@ -1,0 +1,123 @@
+{
+  "project_id": "projEvalTower",
+  "project_name": "Eval Tower",
+  "source": "find",
+  "language": "he",
+  "blueprints": [
+    {
+      "blueprint_id": "bpEval_a",
+      "name": "Ground Floor"
+    }
+  ],
+  "columns": [
+    {
+      "key": "name",
+      "label": "Name",
+      "type": "text"
+    },
+    {
+      "key": "type",
+      "label": "סוג",
+      "type": "text"
+    },
+    {
+      "key": "tag",
+      "label": "מידות",
+      "type": "text"
+    },
+    {
+      "key": "folder",
+      "label": "קבוצה",
+      "type": "text"
+    },
+    {
+      "key": "handing",
+      "label": "Handing",
+      "type": "text"
+    },
+    {
+      "key": "area",
+      "label": "Area",
+      "type": "area",
+      "align": "right"
+    },
+    {
+      "key": "width",
+      "label": "Width",
+      "type": "text"
+    }
+  ],
+  "rows": [
+    {
+      "index": 0,
+      "cells": {
+        "name": "Door",
+        "type": "single swing door",
+        "tag": "D1",
+        "folder": "Doors",
+        "handing": "LH",
+        "area": "0.40 m²",
+        "width": "100 cm wide"
+      },
+      "kind": "item",
+      "element_ids": {
+        "bpEval_a": [
+          "d1"
+        ]
+      },
+      "element_count": 1,
+      "element_ids_truncated": false,
+      "key": {
+        "ref": "se0951e:d1"
+      }
+    },
+    {
+      "index": 1,
+      "cells": {
+        "name": "Door",
+        "type": "single swing door",
+        "tag": "D2",
+        "folder": "Doors",
+        "handing": null,
+        "area": "0.20 m²",
+        "width": "90 cm wide"
+      },
+      "kind": "item",
+      "element_ids": {
+        "bpEval_a": [
+          "d2"
+        ]
+      },
+      "element_count": 1,
+      "element_ids_truncated": false,
+      "key": {
+        "ref": "se0951e:d2"
+      }
+    },
+    {
+      "index": 2,
+      "cells": {
+        "name": "Door",
+        "type": "single swing door",
+        "tag": "D3",
+        "folder": "Doors",
+        "handing": null,
+        "area": "0.16 m²",
+        "width": "80 cm wide"
+      },
+      "kind": "item",
+      "element_ids": {
+        "bpEval_a": [
+          "d3"
+        ]
+      },
+      "element_count": 1,
+      "element_ids_truncated": false,
+      "key": {
+        "ref": "se0951e:d3"
+      }
+    }
+  ],
+  "notes": [],
+  "problems": []
+}

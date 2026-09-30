@@ -1,17 +1,16 @@
 import { useEffect, useRef, useState } from "react";
-import { ExternalLink, Maximize2 } from "lucide-react";
+import { Maximize2 } from "lucide-react";
 
 import {
   callTool,
   getBottomInset,
-  openLink,
   relayDisplayModeRequests,
   reportSize,
   requestDisplayMode,
   setSizeReporting,
 } from "./bridge";
 import { ProjectsWidget } from "./ProjectsWidget";
-import { Button, Card, LoadingState } from "./shared";
+import { Button, Card, LoadingState, OpenKamai } from "./shared";
 import { useDisplayMode } from "./useDisplayMode";
 import { useWidgetData } from "./useWidgetData";
 
@@ -124,6 +123,15 @@ export function KamaiAppWidget() {
     // misreading a slow boot — so a new url starts from a clean slate.
     setBlocked(false);
     setFallbackFailed(false);
+    // A sandbox without allow-same-origin (Open WebUI's default) gives us an opaque origin.
+    // The nested app's HTML still loads, so the refusal checks below never fire, but its
+    // crossorigin module scripts are blocked by CORS and the frame stays white.
+    // window.origin, not location.origin: a srcdoc document's URL is about:srcdoc, whose
+    // origin is always "null" even when allow-same-origin gives it the embedder's.
+    if (window.origin === "null") {
+      setBlocked(true);
+      return;
+    }
     let settled = false;
     const onViolation = (event: SecurityPolicyViolationEvent) => {
       if (settled || !event.violatedDirective?.startsWith("frame-src")) return;
@@ -176,9 +184,7 @@ export function KamaiAppWidget() {
         <>
           <ProjectsWidget data={fallbackData as never} />
           <div className="mt-3 flex justify-center">
-            <Button variant="ghost" size="xs" icon={ExternalLink} onClick={() => void openLink(url)}>
-              Open in Kamai
-            </Button>
+            <OpenKamai href={url} label="Open in Kamai" variant="ghost" size="xs" />
           </div>
         </>
       );
@@ -186,10 +192,12 @@ export function KamaiAppWidget() {
     if (!fallbackFailed) return <LoadingState label="Loading Kamai…" />;
     return (
       <Card className="flex flex-col items-center gap-3 p-8 text-center">
-        <p className="text-sm text-base-content/70">This app does not allow Kamai to be embedded.</p>
-        <Button icon={ExternalLink} onClick={() => void openLink(url)}>
-          Open Kamai
-        </Button>
+        <p className="text-sm text-base-content/70">
+          {window.origin === "null"
+            ? "This chat shows Kamai in a restricted frame, so the full app cannot run here."
+            : "This app does not allow Kamai to be embedded."}
+        </p>
+        <OpenKamai href={url} />
       </Card>
     );
   }

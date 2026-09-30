@@ -1,0 +1,71 @@
+{
+  "blueprint_id": "bpEval_a",
+  "grid": 2000,
+  "features": [
+    {
+      "i": 3,
+      "id": "d1",
+      "cls": "single swing door",
+      "name": "Door",
+      "folder": "Doors",
+      "color": {
+        "r": 120,
+        "g": 120,
+        "b": 120,
+        "a": 140
+      },
+      "rings": [
+        [
+          901,
+          221,
+          974,
+          221,
+          974,
+          404,
+          901,
+          404,
+          901,
+          221
+        ]
+      ],
+      "lines": null,
+      "pts": null,
+      "area": 0.4,
+      "len": null
+    },
+    {
+      "i": 17,
+      "id": "kitchen",
+      "cls": "room",
+      "name": "Net area: Kitchen",
+      "folder": "Rooms",
+      "color": {
+        "r": 120,
+        "g": 120,
+        "b": 120,
+        "a": 140
+      },
+      "rings": [
+        [
+          0,
+          0,
+          919,
+          0,
+          919,
+          735,
+          0,
+          735,
+          0,
+          0
+        ]
+      ],
+      "lines": null,
+      "pts": null,
+      "area": 20.0,
+      "len": null
+    }
+  ],
+  "missing": [
+    "not-there"
+  ]
+}

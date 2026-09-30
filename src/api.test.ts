@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { ApiError, api, parseProjectPage } from "./api.ts";
+import { API_ROUTES, ApiError, api, parseProjectPage, routePath } from "./api.ts";
 
 // The API layer refuses an unentitled upload before it mints a signed URL. What reaches
 // the model is ApiError.message — `fail()` in server.ts rethrows exactly that — so the
@@ -16,14 +16,16 @@ describe("entitlement refusals", () => {
     });
     expect(err.message).toBe(
       "This Kamai account is on the monthly_150 plan and has used 150 of its 150 blueprints. " +
-        "Use the `open_kamai` tool to open Kamai, where the plan can be changed.",
+        "Use the `open_kamai` tool to open Kamai, where the plan can be changed. " +
+        "Do not call this tool again until the user has changed the plan in Kamai; it will be refused the same way.",
     );
   });
 
   it("still produces a usable sentence when the extension members are absent", () => {
     expect(new ApiError("quota_exceeded", 403).message).toBe(
       "This Kamai account has used its whole plan allowance. " +
-        "Use the `open_kamai` tool to open Kamai, where the plan can be changed.",
+        "Use the `open_kamai` tool to open Kamai, where the plan can be changed. " +
+        "Do not call this tool again until the user has changed the plan in Kamai; it will be refused the same way.",
     );
   });
 
@@ -58,7 +60,22 @@ describe("entitlement refusals", () => {
 
   it("leaves the pre-existing codes untouched", () => {
     expect(new ApiError("not_ready", 409).message).toBe("That blueprint is still being processed.");
-    expect(new ApiError("forbidden", 403).message).toBe("You do not have access to that.");
+  });
+
+  // "Exists but is not yours" and "does not exist" must read the same, or the message is
+  // an oracle over other accounts' ids.
+  it("words forbidden and not_found identically, and neutrally", () => {
+    const forbidden = new ApiError("forbidden", 403).message;
+    expect(forbidden).toBe(new ApiError("not_found", 404).message);
+    expect(forbidden).toBe(
+      "Kamai has nothing with that id in this account. Check the id with view_projects, list_blueprints or list_jobs.",
+    );
+  });
+
+  it("tells the model not to retry every plan refusal", () => {
+    for (const code of ["subscription_pending", "subscription_expired", "quota_exceeded", "org_quota_exceeded"]) {
+      expect(new ApiError(code, 403).message, code).toContain("Do not call this tool again");
+    }
   });
 
   it("does not claim the session expired when it cannot know that", () => {
@@ -173,5 +190,105 @@ describe("job routes", () => {
         headers: { "content-type": "application/problem+json" },
       }));
     await expect(api.cancelJob(principal, "p1", "j1")).rejects.toMatchObject({ code: "not_ready", status: 409 });
+  });
+});
+
+describe("problem bodies", () => {
+  const principal = { token: "t", uid: "u" };
+  afterEach(() => vi.unstubAllGlobals());
+
+  const reply = (status: number, body: unknown) =>
+    vi.stubGlobal("fetch", async () =>
+      new Response(typeof body === "string" ? body : JSON.stringify(body), {
+        status,
+        headers: { "content-type": "application/json" },
+      }),
+    );
+
+  // The API framework answers a path it has no route for with {"detail":"Not Found"} and
+  // no code.
+  // Every refusal of the API layer's own carries a code, so the bare 404 is the server
+  // being older than the tool.
+  it("reads a bare 404 as a missing route, not as a missing object", async () => {
+    reply(404, { detail: "Not Found" });
+    const err = await api.getInventory(principal, "p1").catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ApiError);
+    expect((err as ApiError).code).toBe("route_missing");
+    expect((err as ApiError).message).toMatch(/not available on the server yet/);
+    expect((err as ApiError).route).toBe("getInventory");
+  });
+
+  it("keeps a coded 404 as not_found", async () => {
+    reply(404, { code: "not_found", detail: "No blueprint with that id is in this project." });
+    const err = (await api.getInventory(principal, "p1").catch((e: unknown) => e)) as ApiError;
+    expect(err.code).toBe("not_found");
+    expect(err.detail).toBe("No blueprint with that id is in this project.");
+  });
+
+  it("trims the detail and never takes a non-string one", async () => {
+    reply(422, { code: "invalid_request", detail: `  ${"x".repeat(900)}  ` });
+    let err = (await api.querySelect(principal, "p1", {}).catch((e: unknown) => e)) as ApiError;
+    expect(err.detail).toHaveLength(600);
+    reply(422, { detail: [{ loc: ["body", "x"], msg: "bad" }] });
+    err = (await api.querySelect(principal, "p1", {}).catch((e: unknown) => e)) as ApiError;
+    expect(err.detail).toBeUndefined();
+    expect(err.code).toBe("internal");
+  });
+
+  it("sends a PUT for set_scale's route", async () => {
+    const calls: Array<{ url: string; method: string; body: unknown }> = [];
+    vi.stubGlobal("fetch", async (url: URL, init?: RequestInit) => {
+      calls.push({ url: String(url), method: init?.method ?? "GET", body: JSON.parse(String(init?.body)) });
+      return new Response(
+        JSON.stringify({
+          blueprint_id: "b 1",
+          name: "Ground",
+          previous: null,
+          scale: { label: "1:50", type: "metric", units: "si" },
+          stored_heights_reinterpreted: 0,
+          needs_scale: false,
+          scale_unconfirmed: false,
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    });
+    await api.setScale(principal, "p1", "b 1", "1:50");
+    expect(calls).toEqual([
+      { url: "http://127.0.0.1:8005/v1/projects/p1/blueprints/b%201/scale", method: "PUT", body: { label: "1:50" } },
+    ]);
+  });
+
+  // A response that does not match the contract is a server fault, not something to
+  // hand the model half-understood. The case that matters: a raw number where a display
+  // string belongs is an SI value with no unit.
+  it("refuses a query response whose measurement is a raw number", async () => {
+    reply(200, {
+      project_id: "p1",
+      project_name: "P",
+      blueprints: [],
+      rows: [{ ref: "s0001:a", id: "a", blueprint_id: "b1", area: 12.5 }],
+      total: 1,
+      returned: 1,
+      offset: 0,
+      next_offset: null,
+      excluded: [],
+      total_is_partial: false,
+      notes: [],
+      selection: null,
+    });
+    const err = (await api.querySelect(principal, "p1", {}).catch((e: unknown) => e)) as ApiError;
+    expect(err).toBeInstanceOf(ApiError);
+    expect(err.code).toBe("internal");
+  });
+
+  it("builds every path from the route table", () => {
+    for (const [name, route] of Object.entries(API_ROUTES)) {
+      const params = Object.fromEntries(
+        [...route.template.matchAll(/\{([a-z_]+)\}/g)].map((m) => [m[1]!, "x/y"]),
+      );
+      const path = routePath(name as keyof typeof API_ROUTES, params);
+      expect(path, name).not.toContain("{");
+      expect(path, name).not.toContain("x/y");
+    }
   });
 });

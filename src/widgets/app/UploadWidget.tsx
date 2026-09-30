@@ -12,7 +12,7 @@ import {
   TERMINAL_BAD,
 } from "./format";
 import { BlueprintPanel } from "./BlueprintWidget";
-import { BrandHeader, Button, Card, LoadingState, StatusBadge } from "./shared";
+import { ActionError, BrandHeader, Button, Card, LoadingState, StatusBadge } from "./shared";
 import type {
   BlueprintData,
   BlueprintSummary,
@@ -108,7 +108,7 @@ export function UploadWidget() {
   const [phase, setPhase] = useState("Drop a PDF here");
   const [phaseDetail, setPhaseDetail] = useState("or click to choose a file");
   const [uploadProgress, setUploadProgress] = useState<number | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<unknown>(null);
   const [jobs, setJobs] = useState<JobSummary[]>([]);
   const [blueprints, setBlueprints] = useState<BlueprintSummary[]>([]);
   const [tracked, setTracked] = useState<{ jobId: string | null; filename: string | null } | null>(null);
@@ -183,7 +183,7 @@ export function UploadWidget() {
   const upload = async (file: File) => {
     setError(null);
     if (!file.name.toLowerCase().endsWith(".pdf") && file.type !== "application/pdf") {
-      setError("Only PDF blueprints are supported.");
+      setError(new Error("Only PDF blueprints are supported."));
       return;
     }
     setBusy(true);
@@ -220,7 +220,7 @@ export function UploadWidget() {
       setUploadProgress(null);
       setPhase("Drop a PDF here");
       setPhaseDetail("or click to choose a file");
-      setError(reason instanceof Error ? reason.message : "Upload failed.");
+      setError(reason instanceof Error ? reason : new Error("Upload failed."));
     } finally {
       setBusy(false);
     }
@@ -251,7 +251,7 @@ export function UploadWidget() {
         project_id: projectId,
       }));
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Could not open this blueprint.");
+      setError(reason instanceof Error ? reason : new Error("Could not open this blueprint."));
     }
   };
 
@@ -303,7 +303,7 @@ export function UploadWidget() {
         </div>
       </Card>
 
-      {error && <div className="alert alert-error mt-3 py-2 text-sm">{error}</div>}
+      <ActionError error={error} className="mt-3" />
 
       {visibleJobs.length > 0 && (
         <Card className="mt-4">

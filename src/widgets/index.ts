@@ -11,9 +11,9 @@ const UI_SCHEME = "ui://kamai";
 
 // Hosts cache resource contents by URI for up to about an hour, so any breaking
 // change to a widget needs a new version here.
-export const WIDGET_VERSION = "v25";
+export const WIDGET_VERSION = "v28";
 
-export const WIDGET_NAMES = ["projects", "blueprint", "takeoff", "upload", "iframetest"] as const;
+export const WIDGET_NAMES = ["projects", "blueprint", "takeoff", "upload", "iframetest", "table"] as const;
 
 export type WidgetName = (typeof WIDGET_NAMES)[number];
 
@@ -92,6 +92,9 @@ export const CSP: Partial<Record<WidgetName, Csp>> = {
   // projects → blueprint tree inside this bundle, and BlueprintPanel loads its page
   // image from a storage.googleapis.com signed URL like the standalone widgets do.
   iframetest: { connectDomains: [], resourceDomains: [GCS_ORIGIN], frameDomains: FRAME_ORIGINS },
+  // A row opens the plan inside the table panel, and the plan's page image is a
+  // storage.googleapis.com signed URL, as in the blueprint widget.
+  table: { connectDomains: [], resourceDomains: [GCS_ORIGIN] },
 };
 
 const cache = new Map<string, string>();

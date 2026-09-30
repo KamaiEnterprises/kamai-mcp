@@ -1,0 +1,161 @@
+{
+  "project_id": "projEvalTower",
+  "project_name": "Eval Tower",
+  "blueprints": [
+    {
+      "blueprint_id": "bpEval_a",
+      "name": "Ground Floor",
+      "units": "metric",
+      "has_scale": true
+    },
+    {
+      "blueprint_id": "bpEval_b",
+      "name": "First Floor",
+      "units": "imperial",
+      "has_scale": true
+    },
+    {
+      "blueprint_id": "bpEval_never",
+      "name": "Roof",
+      "units": "metric",
+      "has_scale": true
+    },
+    {
+      "blueprint_id": "bpEval_unscaled",
+      "name": "Basement",
+      "units": null,
+      "has_scale": false
+    }
+  ],
+  "group_by": [
+    "folder",
+    "sub_class",
+    "tag"
+  ],
+  "groups": [
+    {
+      "folder": "Doors",
+      "sub_class": "double swing door",
+      "tag": "D4",
+      "count": 1,
+      "area": "0.20 m²",
+      "perimeter": "2.40 m",
+      "width_min": "120 cm wide",
+      "width_max": "120 cm wide",
+      "element_count": 1,
+      "element_ids": {
+        "bpEval_a": [
+          "d4"
+        ]
+      },
+      "element_ids_truncated": false
+    },
+    {
+      "folder": "Doors",
+      "sub_class": "single swing door",
+      "tag": "D1",
+      "count": 1,
+      "area": "0.40 m²",
+      "perimeter": "2.80 m",
+      "width_min": "100 cm wide",
+      "width_max": "100 cm wide",
+      "element_count": 1,
+      "element_ids": {
+        "bpEval_a": [
+          "d1"
+        ]
+      },
+      "element_ids_truncated": false
+    },
+    {
+      "folder": "Doors",
+      "sub_class": "single swing door",
+      "tag": "D2",
+      "count": 1,
+      "area": "0.20 m²",
+      "perimeter": "2.40 m",
+      "width_min": "90 cm wide",
+      "width_max": "90 cm wide",
+      "element_count": 1,
+      "element_ids": {
+        "bpEval_a": [
+          "d2"
+        ]
+      },
+      "element_ids_truncated": false
+    },
+    {
+      "folder": "Doors",
+      "sub_class": "single swing door",
+      "tag": "D3",
+      "count": 1,
+      "area": "0.16 m²",
+      "perimeter": "2.00 m",
+      "width_min": "80 cm wide",
+      "width_max": "80 cm wide",
+      "element_count": 1,
+      "element_ids": {
+        "bpEval_a": [
+          "d3"
+        ]
+      },
+      "element_ids_truncated": false
+    },
+    {
+      "folder": "Doors",
+      "sub_class": "sliding door",
+      "tag": "D5",
+      "count": 1,
+      "area": "0.30 m²",
+      "perimeter": "3.40 m",
+      "width_min": "150 cm wide",
+      "width_max": "150 cm wide",
+      "element_count": 1,
+      "element_ids": {
+        "bpEval_a": [
+          "d5"
+        ]
+      },
+      "element_ids_truncated": false
+    },
+    {
+      "folder": "Root",
+      "sub_class": "single swing door",
+      "tag": null,
+      "count": 1,
+      "area": "3.88 SF",
+      "perimeter": "8.53 FT",
+      "width_min": "2' 11 1/2\" wide",
+      "width_max": "2' 11 1/2\" wide",
+      "element_count": 1,
+      "element_ids": {
+        "bpEval_b": [
+          "d_wc"
+        ]
+      },
+      "element_ids_truncated": false
+    }
+  ],
+  "groups_total": 6,
+  "groups_truncated": false,
+  "total": {
+    "count": 6,
+    "count_is_partial": true,
+    "units_conflict": "These blueprints use different measurement systems, so there is no single total. Report each blueprint separately."
+  },
+  "excluded": [
+    {
+      "blueprint_id": "bpEval_never",
+      "name": "Roof",
+      "reason": "not_indexed"
+    },
+    {
+      "blueprint_id": "bpEval_unscaled",
+      "name": "Basement",
+      "reason": "no_matching_elements"
+    }
+  ],
+  "total_is_partial": true,
+  "notes": [],
+  "selection": "q1.eNodizsKgDAQBe_y6jS26b2BnYjE_ECDG_ITCbm7i90wzHQ4yA6tivWUXkgYopQxBDzkCkfB2ASBXI9dB5Uzc1Eem8DFtaZ6F1aROSY656bCQs-_NMhpfAHxHwU"
+}

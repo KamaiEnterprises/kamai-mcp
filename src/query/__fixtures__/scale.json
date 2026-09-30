@@ -1,0 +1,17 @@
+{
+  "blueprint_id": "bpEval_a",
+  "name": "Ground Floor",
+  "previous": {
+    "label": "1:100",
+    "type": "metric",
+    "units": "si"
+  },
+  "scale": {
+    "label": "1:100",
+    "type": "metric",
+    "units": "si"
+  },
+  "stored_heights_reinterpreted": 1,
+  "needs_scale": false,
+  "scale_unconfirmed": false
+}
