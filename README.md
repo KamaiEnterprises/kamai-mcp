@@ -119,6 +119,11 @@ Local builds require Bun 1.3.3 and Node.js 22.12 or newer.
                        Open WebUI helpers: an open_kamai Tool, a display-mode
                        host script, a local bridge demo
 
+## Privacy and support
+
+- Privacy policy: https://kamai.io/privacy-policy
+- Support: https://kamai.io/support or contact@kamai.io
+
 ## Contributing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md). Security issues go to the address in
