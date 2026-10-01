@@ -85,7 +85,7 @@ describe("set_opening_height", () => {
     const tool = tools.find((t) => t.name === "set_opening_height");
     expect(tool).toBeDefined();
     expect(tool?.annotations?.readOnlyHint).toBe(false);
-    expect(tool?.annotations?.destructiveHint).toBe(false);
+    expect(tool?.annotations?.destructiveHint).toBe(true);
     expect(tool?._meta?.ui).toBeUndefined();
     // The three rules the model cannot read off the schema.
     expect(tool?.description).toMatch(/never pass a standard, typical or assumed/i);

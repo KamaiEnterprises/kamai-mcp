@@ -147,7 +147,9 @@ describe("tool list, query tools off", () => {
   it("marks the annotation fixes", async () => {
     const tools = await listTools(false);
     const byName = Object.fromEntries(tools.map((t) => [t.name, t.annotations]));
-    expect(byName.update_project).toMatchObject({ readOnlyHint: false, destructiveHint: false, idempotentHint: true });
+    expect(byName.update_project).toMatchObject({ readOnlyHint: false, destructiveHint: true, idempotentHint: true });
+    expect(byName.update_elements).toMatchObject({ readOnlyHint: false, destructiveHint: true, idempotentHint: true });
+    expect(byName.move_elements).toMatchObject({ readOnlyHint: false, destructiveHint: true, idempotentHint: true });
     expect(byName.view_upload).toMatchObject({ readOnlyHint: true, destructiveHint: false });
     expect(byName.cancel_job).toMatchObject({ destructiveHint: true, idempotentHint: true });
     expect(byName.create_folder).toMatchObject({ readOnlyHint: false, idempotentHint: false });
