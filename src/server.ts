@@ -34,7 +34,6 @@ import {
   DESTRUCTIVE_IDEMPOTENT,
   READONLY,
   WRITE,
-  WRITE_IDEMPOTENT,
   text,
 } from "./tool-kit.ts";
 import { registerListBlueprints } from "./query/list-blueprints.ts";
@@ -662,7 +661,7 @@ export function buildServer(
         dry_run: z.boolean().optional().describe("Report what would change without changing it."),
       },
       outputSchema: looseOutput(featurePatchResultSchema),
-      annotations: WRITE_IDEMPOTENT,
+      annotations: DESTRUCTIVE_IDEMPOTENT,
     },
     async ({ blueprint_id, project_id, ids, name, color, dry_run }) => {
       try {
@@ -754,7 +753,7 @@ export function buildServer(
         dry_run: z.boolean().optional(),
       },
       outputSchema: looseOutput(featureMovedSchema),
-      annotations: WRITE_IDEMPOTENT,
+      annotations: DESTRUCTIVE_IDEMPOTENT,
     },
     async ({ blueprint_id, project_id, ids, parent_id, index, dry_run }) => {
       try {
@@ -832,7 +831,7 @@ export function buildServer(
           ),
       },
       outputSchema: looseOutput(setOpeningHeightOutput),
-      annotations: WRITE_IDEMPOTENT,
+      annotations: DESTRUCTIVE_IDEMPOTENT,
     },
     async ({ blueprint_id, project_id, ids, height, height_unit, height_quote, tag }) => {
       try {
@@ -957,7 +956,7 @@ export function buildServer(
         description: z.string().optional(),
       },
       outputSchema: looseOutput(projectSummarySchema),
-      annotations: WRITE_IDEMPOTENT,
+      annotations: DESTRUCTIVE_IDEMPOTENT,
     },
     async ({ project_id, name, description }) => {
       try {
