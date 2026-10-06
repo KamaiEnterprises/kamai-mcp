@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Eye, EyeOff, Maximize2 } from "lucide-react";
+import { Download, Eye, EyeOff, Maximize2, MousePointerClick } from "lucide-react";
 
-import { callTool, HostCannotCallTools, reportSize, requestDisplayMode } from "./bridge";
-import { rgba } from "./format";
+import { callTool, hostCanCallTools, HostCannotCallTools, openLink, reportSize, requestDisplayMode, sendPrompt } from "./bridge";
+import { downloadPrompt, rgba } from "./format";
 import { ActionError, BrandHeader, Button, Card, KAMAI_APP_URL, LoadingState, OpenKamai, ProcessingState } from "./shared";
 import { TakeoffPanel } from "./TakeoffPanel";
 import type { BlueprintData, GeometryFeature, Highlight, TakeoffData } from "./types";
@@ -88,6 +88,18 @@ function inRings(feature: GeometryFeature, x: number, y: number): boolean {
   return inside;
 }
 
+export function ringsArea(feature: Pick<GeometryFeature, "rings">): number {
+  let total = 0;
+  for (const ring of feature.rings ?? []) {
+    let twice = 0;
+    for (let index = 0, previous = ring.length - 2; index < ring.length; previous = index, index += 2) {
+      twice += (ring[previous] ?? 0) * (ring[index + 1] ?? 0) - (ring[index] ?? 0) * (ring[previous + 1] ?? 0);
+    }
+    total += Math.abs(twice) / 2;
+  }
+  return total;
+}
+
 function nearPath(feature: GeometryFeature, x: number, y: number, tolerance: number): boolean {
   for (const line of feature.lines ?? []) {
     for (let index = 0; index + 3 < line.length; index += 2) {
@@ -137,6 +149,95 @@ function drawHighlight(context: CanvasRenderingContext2D, highlight: Highlight, 
   }
 }
 
+export type PlanExportResult = {
+  url: string;
+  file_name: string;
+  expires_in: number;
+  elements: number;
+  unmatched_highlight?: string[];
+  missing_ids?: string[];
+};
+
+function DownloadBar({
+  data,
+  picked,
+  pickedClasses,
+  onClear,
+}: {
+  data: BlueprintData;
+  picked: Set<string>;
+  pickedClasses: Set<string>;
+  onClear: () => void;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState<PlanExportResult | null>(null);
+  const [error, setError] = useState<unknown>(null);
+  const [asked, setAsked] = useState(false);
+  const ids = [...picked];
+  const classes = [...pickedClasses];
+  const count = ids.length + classes.length;
+
+  const download = async () => {
+    setError(null);
+    setResult(null);
+    setAsked(false);
+    if (!hostCanCallTools()) {
+      await sendPrompt(downloadPrompt(data.name || "the blueprint", ids, classes));
+      setAsked(true);
+      return;
+    }
+    setBusy(true);
+    try {
+      const out = await callTool<PlanExportResult>("download_plan", {
+        blueprint_id: data.blueprint_id,
+        project_id: data.project_id || undefined,
+        ...(ids.length ? { element_ids: ids } : {}),
+        ...(classes.length ? { highlight: classes } : {}),
+      });
+      setResult(out);
+      void openLink(out.url);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason : new Error("Could not make the PDF."));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Card className="mt-3 p-3 text-sm">
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="text-base-content/70">
+          {count
+            ? `Selected: ${[classes.length ? classes.join(", ") : "", ids.length ? `${ids.length} element${ids.length === 1 ? "" : "s"}` : ""].filter(Boolean).join(" + ")}`
+            : "Nothing selected: the PDF will show every element."}
+        </span>
+        <div className="ml-auto flex gap-2">
+          {count > 0 && (
+            <Button variant="ghost" size="xs" onClick={onClear}>
+              Clear
+            </Button>
+          )}
+          <Button size="xs" icon={Download} loading={busy} onClick={() => void download()}>
+            Download PDF
+          </Button>
+        </div>
+      </div>
+      {asked && <p className="mt-2 text-xs text-base-content/60">Sent to the chat. Confirm it there and the assistant replies with the download link.</p>}
+      {result && (
+        <p className="mt-2 text-xs">
+          <a className="link link-primary" href={result.url} target="_blank" rel="noreferrer" download={result.file_name}>
+            {result.file_name}
+          </a>{" "}
+          <span className="text-base-content/55">
+            {result.elements} elements · link valid {Math.round(result.expires_in / 60)} min
+          </span>
+        </p>
+      )}
+      <ActionError error={error} className="mt-2" />
+    </Card>
+  );
+}
+
 function BlueprintCanvas({ data, highlight }: { data: BlueprintData; highlight?: Highlight }) {
   const container = useRef<HTMLDivElement>(null);
   const canvas = useRef<HTMLCanvasElement>(null);
@@ -146,6 +247,9 @@ function BlueprintCanvas({ data, highlight }: { data: BlueprintData; highlight?:
   const [imageFailed, setImageFailed] = useState(false);
   const [hidden, setHidden] = useState<Set<string>>(new Set());
   const [selected, setSelected] = useState<GeometryFeature | null>(null);
+  const [selecting, setSelecting] = useState(false);
+  const [picked, setPicked] = useState<Set<string>>(new Set());
+  const [pickedClasses, setPickedClasses] = useState<Set<string>>(new Set());
   const features = data.features ?? [];
   const grid = data.grid ?? DEFAULT_GRID;
 
@@ -211,12 +315,17 @@ function BlueprintCanvas({ data, highlight }: { data: BlueprintData; highlight?:
     for (const feature of features) {
       if (hidden.has(feature.cls)) continue;
       if (highlight && feature.id && highlight.ids.has(feature.id)) continue;
-      drawFeature(context, feature, scale, selected?.i === feature.i, accent);
+      const chosen = selecting
+        ? (!!feature.id && picked.has(feature.id)) || pickedClasses.has(feature.cls)
+        : selected?.i === feature.i;
+      const dimmed = selecting && !chosen && (picked.size > 0 || pickedClasses.size > 0);
+      context.globalAlpha = highlight ? 0.25 : dimmed ? 0.35 : 1;
+      drawFeature(context, feature, scale, chosen, accent);
     }
     context.globalAlpha = 1;
     if (highlight) drawHighlight(context, highlight, width, accent);
     view.current = { width, height, scale };
-  }, [data.image?.h, data.image?.w, features, grid, hidden, highlight, image, selected?.i]);
+  }, [data.image?.h, data.image?.w, features, grid, hidden, highlight, image, selected?.i, selecting, picked, pickedClasses]);
 
   useEffect(() => {
     draw();
@@ -234,19 +343,41 @@ function BlueprintCanvas({ data, highlight }: { data: BlueprintData; highlight?:
     const x = (event.clientX - bounds.left) / view.current.scale;
     const y = (event.clientY - bounds.top) / view.current.scale;
     const tolerance = 6 / view.current.scale;
+    // The smallest shape under the pointer wins: a footprint or a room drawn over a door
+    // would otherwise swallow every click inside it.
     let hit: GeometryFeature | null = null;
+    let hitSize = Infinity;
     for (let index = features.length - 1; index >= 0; index -= 1) {
       const feature = features[index]!;
       if (hidden.has(feature.cls)) continue;
-      if (inRings(feature, x, y) || nearPath(feature, x, y, tolerance)) {
+      const size = nearPath(feature, x, y, tolerance) ? 0 : inRings(feature, x, y) ? ringsArea(feature) : Infinity;
+      if (size < hitSize) {
         hit = feature;
-        break;
+        hitSize = size;
       }
     }
     setSelected(hit);
+    if (selecting && hit?.id) {
+      const id = hit.id;
+      setPicked((current) => {
+        const next = new Set(current);
+        if (next.has(id)) next.delete(id);
+        else next.add(id);
+        return next;
+      });
+    }
   };
 
   const toggleGroup = (name: string) => {
+    if (selecting) {
+      setPickedClasses((current) => {
+        const next = new Set(current);
+        if (next.has(name)) next.delete(name);
+        else next.add(name);
+        return next;
+      });
+      return;
+    }
     setHidden((current) => {
       const next = new Set(current);
       if (next.has(name)) next.delete(name);
@@ -268,15 +399,25 @@ function BlueprintCanvas({ data, highlight }: { data: BlueprintData; highlight?:
       {imageFailed && <p className="mt-2 text-xs text-warning">Preview image is unavailable; showing takeoff geometry.</p>}
 
       <div className="mt-3 flex flex-wrap gap-2">
+        <button
+          onClick={() => setSelecting((on) => !on)}
+          aria-pressed={selecting}
+          className={`badge h-auto gap-1.5 rounded-full border px-2.5 py-1 text-xs ${selecting ? "badge-primary border-primary" : "border-base-300 bg-base-100"}`}
+        >
+          <MousePointerClick className="h-3 w-3" />
+          {selecting ? "Selecting" : "Select"}
+        </button>
         {groups.map(([name, group]) => {
           const off = hidden.has(name);
+          const chosen = selecting && pickedClasses.has(name);
           return (
             <button
               key={name}
               onClick={() => toggleGroup(name)}
-              className={`badge h-auto gap-1.5 rounded-full border border-base-300 px-2.5 py-1 text-xs ${off ? "opacity-40" : "bg-base-100"}`}
+              aria-pressed={selecting ? chosen : undefined}
+              className={`badge h-auto gap-1.5 rounded-full border px-2.5 py-1 text-xs ${chosen ? "border-primary bg-primary/10" : "border-base-300"} ${off ? "opacity-40" : "bg-base-100"}`}
             >
-              {off ? <EyeOff className="h-3 w-3" /> : <Eye className="h-3 w-3" />}
+              {selecting ? null : off ? <EyeOff className="h-3 w-3" /> : <Eye className="h-3 w-3" />}
               <span className="h-2.5 w-2.5 rounded-sm" style={{ background: rgba(group.color, 0.85) }} />
               {name} <span className="opacity-50">{group.count}</span>
             </button>
@@ -293,9 +434,20 @@ function BlueprintCanvas({ data, highlight }: { data: BlueprintData; highlight?:
             {!!selected.len && <span>{selected.len} {units.length}</span>}
           </div>
         ) : (
-          <span className="text-base-content/55">Click a shape to inspect it.</span>
+          <span className="text-base-content/55">
+            {selecting ? "Click shapes or a class to add them to the PDF." : "Click a shape to inspect it."}
+          </span>
         )}
       </Card>
+      <DownloadBar
+        data={data}
+        picked={picked}
+        pickedClasses={pickedClasses}
+        onClear={() => {
+          setPicked(new Set());
+          setPickedClasses(new Set());
+        }}
+      />
     </>
   );
 }
@@ -428,6 +580,14 @@ export function BlueprintPanel({
 // and no image. Drawing it would be an empty canvas captioned "showing takeoff geometry".
 function BlueprintSummary({ data }: { data: BlueprintData }) {
   const subtitle = [data.project_name ? `in ${data.project_name}` : null, data.scale_label].filter(Boolean).join(" · ");
+  const [pickedClasses, setPickedClasses] = useState<Set<string>>(new Set());
+  const toggle = (cls: string) =>
+    setPickedClasses((current) => {
+      const next = new Set(current);
+      if (next.has(cls)) next.delete(cls);
+      else next.add(cls);
+      return next;
+    });
   return (
     <>
       <BrandHeader title={data.name || "Blueprint"} subtitle={subtitle || undefined} />
@@ -438,18 +598,30 @@ function BlueprintSummary({ data }: { data: BlueprintData }) {
         </p>
         {data.classes && data.classes.length > 0 && (
           <ul className="mt-3 grid grid-cols-[repeat(auto-fit,minmax(160px,1fr))] gap-x-4 gap-y-1 text-sm">
-            {data.classes.map((row) => (
-              <li key={row.cls} className="flex justify-between gap-3">
-                <span className="truncate">{row.cls}</span>
-                <span className="tabular-nums text-base-content/60">{row.count}</span>
-              </li>
-            ))}
+            {data.classes.map((row) => {
+              const on = pickedClasses.has(row.cls);
+              return (
+                <li key={row.cls}>
+                  <button
+                    onClick={() => toggle(row.cls)}
+                    aria-pressed={on}
+                    className={`flex w-full justify-between gap-3 rounded px-1.5 py-0.5 text-left ${on ? "bg-primary/10 font-medium text-primary" : "hover:bg-base-200"}`}
+                  >
+                    <span className="truncate">{on ? "✓ " : ""}{row.cls}</span>
+                    <span className="tabular-nums text-base-content/60">{row.count}</span>
+                  </button>
+                </li>
+              );
+            })}
           </ul>
         )}
         <div className="mt-4">
           <OpenKamai href={`${KAMAI_APP_URL}/projects/${encodeURIComponent(data.project_id)}`} label="Open in Kamai" />
         </div>
       </Card>
+      {data.classes && data.classes.length > 0 && (
+        <DownloadBar data={data} picked={new Set()} pickedClasses={pickedClasses} onClear={() => setPickedClasses(new Set())} />
+      )}
     </>
   );
 }

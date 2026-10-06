@@ -4,6 +4,7 @@ import { Maximize2 } from "lucide-react";
 import {
   callTool,
   getBottomInset,
+  hostCanCallTools,
   relayDisplayModeRequests,
   reportSize,
   requestDisplayMode,
@@ -20,6 +21,31 @@ interface KamaiAppData {
   open_in?: string | null;
   /** Hosts that render their own expand control can turn ours off. */
   expand_button?: boolean;
+  panel_sign_in?: boolean;
+}
+
+// A fresh code per mount: a code kept in a stored tool result would already be spent.
+function usePanelSrc(url: string, enabled: boolean): string | null {
+  const [src, setSrc] = useState<string | null>(enabled ? null : url);
+  useEffect(() => {
+    if (!enabled || !hostCanCallTools()) {
+      setSrc(url);
+      return;
+    }
+    let cancelled = false;
+    setSrc(null);
+    callTool<{ panel_code?: string }>("open_kamai_session")
+      .then((result) => {
+        if (cancelled) return;
+        const code = result?.panel_code;
+        setSrc(code ? `${url}#kamai_panel_code=${encodeURIComponent(code)}` : url);
+      })
+      .catch(() => !cancelled && setSrc(url));
+    return () => {
+      cancelled = true;
+    };
+  }, [url, enabled]);
+  return src;
 }
 
 const FALLBACK_URL = "https://app.kamai.io";
@@ -62,6 +88,7 @@ export function KamaiAppWidget() {
   const mode = useDisplayMode();
   const frame = useRef<HTMLIFrameElement>(null);
   const url = data?.url ?? FALLBACK_URL;
+  const src = usePanelSrc(url, Boolean(data?.panel_sign_in));
 
   // Layout is keyed on the box we were actually given, not the mode we believe we are
   // in: exiting fullscreen via the host's own control does not reliably notify us, and
@@ -112,7 +139,7 @@ export function KamaiAppWidget() {
   // without structuredContent, which lands here as undefined — data !== null let
   // that arm the refusal timer while the render branch still showed the loader
   // with no iframe mounted at all.
-  const hasData = Boolean(data);
+  const hasData = Boolean(data) && src !== null;
   useEffect(() => {
     // No iframe exists until data arrives (the early return below), and in production
     // the delivered url equals FALLBACK_URL, so keying on url alone let the grace
@@ -176,7 +203,7 @@ export function KamaiAppWidget() {
     };
   }, [blocked, fallbackData, fallbackFailed]);
 
-  if (!data) return <LoadingState label="Loading Kamai…" />;
+  if (!data || src === null) return <LoadingState label="Loading Kamai…" />;
 
   if (blocked) {
     if (fallbackData) {
@@ -216,7 +243,7 @@ export function KamaiAppWidget() {
       )}
       <iframe
         ref={frame}
-        src={url}
+        src={src}
         title="Kamai"
         className={`w-full border-0 bg-base-100 ${filling ? "fill-grow" : "h-[520px] rounded-lg"}`}
         allow="clipboard-write; fullscreen"

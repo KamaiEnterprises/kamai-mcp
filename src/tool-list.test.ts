@@ -29,6 +29,7 @@ const TODAY = [
   "finalize_blueprint_upload",
   "view_upload",
   "open_kamai",
+  "download_plan",
 ];
 
 const APP_ONLY_TODAY = [
@@ -124,10 +125,10 @@ describe("tool list, query tools off", () => {
     expect(names.sort()).toEqual([...TODAY, "list_blueprints", "ingest_blueprint_from_chat"].sort());
   });
 
-  it("keeps the same app-only set, 17 visible", async () => {
+  it("keeps the same app-only set, 18 visible", async () => {
     const tools = await listTools(false);
     expect(tools.filter(isAppOnly).map((t) => t.name).sort()).toEqual([...APP_ONLY_TODAY].sort());
-    expect(tools.filter((t) => !isAppOnly(t))).toHaveLength(17);
+    expect(tools.filter((t) => !isAppOnly(t))).toHaveLength(18);
   });
 
   it("gives every tool a title and all four hints", async () => {
@@ -274,23 +275,25 @@ describe("structuredContent of existing tools", () => {
 
 // ── query tools on ───────────────────────────────────────────────────────────────────
 
-const QUERY_VISIBLE = ["count_elements", "find_elements", "calculate_wall_surface_area", "render_table", "set_scale"];
+const QUERY_VISIBLE = ["count_elements", "find_elements", "calculate_wall_surface_area", "render_table", "set_scale", "export"];
 const QUERY_APP_ONLY = ["get_table_row_elements", "get_element_outlines"];
 
 describe("tool list, query tools on", () => {
-  it("adds the query tools: 22 visible, 29 in all", async () => {
+  it("adds the query tools: 24 visible, 31 in all", async () => {
     const tools = await listTools(true);
     expect(tools.map((t) => t.name).sort()).toEqual(
       [...TODAY, "list_blueprints", ...QUERY_VISIBLE, ...QUERY_APP_ONLY].sort(),
     );
-    expect(tools.filter((t) => !isAppOnly(t))).toHaveLength(22);
+    expect(tools.filter((t) => !isAppOnly(t))).toHaveLength(24);
     expect(tools.filter(isAppOnly).map((t) => t.name).sort()).toEqual([...APP_ONLY_TODAY, ...QUERY_APP_ONLY].sort());
   });
 
-  // Hosts degrade tool choice past roughly this many visible tools.
+  // Our own budget, not a host limit: Anthropic says tool choice degrades past 30-50 tools,
+  // OpenAI suggests under 20 at the start of a turn, Cursor warns past 40 across all servers.
+  // Raising it is a product decision, not a test fix.
   it("stays at or under 25 visible tools, ChatGPT included", async () => {
     const tools = await listTools(true, true);
-    expect(tools.filter((t) => !isAppOnly(t))).toHaveLength(23);
+    expect(tools.filter((t) => !isAppOnly(t))).toHaveLength(25);
     expect(tools.filter((t) => !isAppOnly(t)).length).toBeLessThanOrEqual(25);
   });
 
@@ -360,6 +363,64 @@ describe("tool list, query tools on", () => {
     const listProps = (tools.list_blueprints!.inputSchema as { properties: Props }).properties;
     expect(listProps.project_id!.description).toMatch(/never its name/);
     expect(countProps.project_id!.description).toMatch(/never its name/);
+  });
+
+  // Door handing (2026-09-28): the rules a model needs to count doors by hand without
+  // reporting an undetermined door as "no handing" or a zero.
+  it("teaches door handing on count and find", async () => {
+    const tools = Object.fromEntries((await listTools(true)).map((t) => [t.name, t]));
+    type Props = Record<string, { description?: string; items?: { enum?: string[] } }>;
+    for (const name of ["count_elements", "find_elements"]) {
+      const props = (tools[name]!.inputSchema as { properties: Props }).properties;
+      const handing = props.handing!.description!;
+      expect(props.handing!.items?.enum?.sort(), name).toEqual(["LH", "LHR", "RH", "RHR"]);
+      for (const phrase of [
+        "Single swing doors only",
+        "swings away from (push side)",
+        "swings toward (pull side)",
+        "not determined, never 'no handing'",
+        "never where ne / not_in",
+        "sub_class ['single swing door'] + where",
+        '"op":"is_null"',
+        "is_null without that sub_class matches every room",
+        "update_elements cannot",
+        "דלת שמאלית = LH",
+        "דלת ימנית = RH",
+        "הפוכה = LHR / RHR",
+        "כיוון פתיחה = handing",
+        // every clause that steers an answer, pinned (mutation survivors, 2026-09-28 review)
+        "every other door, window or element has none",
+        "read off the drawing's swing arc",
+        "present only where a user stored them",
+        "newer ones have it on nearly every single swing door",
+        "This filter never counts undetermined doors",
+        "`notes` says how many of the matching single swing doors have none, so say that number",
+        "For the other hand use handing with the other values",
+        "Users set or correct handing on the door in the Kamai app",
+      ]) {
+        expect(handing, `${name}: ${phrase}`).toContain(phrase);
+      }
+    }
+    const groupBy = (tools.count_elements!.inputSchema as { properties: Props }).properties.group_by!.description!;
+    expect(groupBy).toContain("sub_class ['single swing door'] + group_by ['handing']");
+    expect(groupBy).toContain("['folder','sub_class','tag','handing'], the 4-key maximum: add no fifth key");
+    expect(groupBy).toContain(
+      "the group with no handing is not determined (with category doors it also holds every double swing and sliding door)",
+    );
+    const count = tools.count_elements!.description!;
+    expect(count).toMatch(/left-hand or right-hand doors → sub_class \['single swing door'\] \+ group_by \['handing'\]/);
+    expect(count).toContain("report the LH (or RH) group AND the not-determined group");
+    expect(count).toContain("filter handing ['LH'] / ['RH'] only to list them (reverse: 'LHR' / 'RHR')");
+    // the wording that took the live eval from 1/3 to 3/3 (2026-09-28)
+    expect(count).toContain(
+      "A door with no handing is not determined, never zero and never 'no handing': say how many are not determined, in those words.",
+    );
+    const find = tools.find_elements!.description!;
+    expect(find).toContain("LHR / RHR = the reverse (pull-side) handings, only where a user stored them");
+    expect(find).toContain("A row with no handing is not determined (or not a single swing door), never 'no handing'. Never ne / not_in on handing.");
+    expect(find).toContain("Users set it in the Kamai app; update_elements cannot.");
+    // the baseline tools stay frozen: no handing wording leaked into update_elements
+    expect(tools.update_elements!.description).not.toMatch(/handing/i);
   });
 
   it("marks set_scale destructive, so hosts ask before it rewrites a sheet", async () => {

@@ -242,6 +242,22 @@ export const featureMovedSchema = z.object({
   refused: z.array(z.object({ id: z.string(), reason: z.string() })),
 });
 
+export const planExportSchema = z.object({
+  blueprint_id: z.string(),
+  name: z.string().nullish(),
+  project_id: z.string(),
+  project_name: z.string().nullish(),
+  url: z.string(),
+  file_name: z.string(),
+  format: z.string(),
+  expires_in: z.number(),
+  bytes: z.number(),
+  elements: z.number(),
+  legend: z.array(z.object({ label: z.string(), count: z.number(), color: rgbaSchema })),
+  unmatched_highlight: z.array(z.string()),
+  missing_ids: z.array(z.string()),
+});
+
 export type Rgba = z.infer<typeof rgbaSchema>;
 export type BlueprintSummary = z.infer<typeof blueprintSummarySchema>;
 export type ProjectSummary = z.infer<typeof projectSummarySchema>;
@@ -262,6 +278,35 @@ export type FeaturePatchResult = z.infer<typeof featurePatchResultSchema>;
 export type FolderCreated = z.infer<typeof folderCreatedSchema>;
 export type FeatureMoved = z.infer<typeof featureMovedSchema>;
 export type OpeningPieceAttributes = z.infer<typeof openingPieceAttributesSchema>;
+export type PlanExport = z.infer<typeof planExportSchema>;
+
+export const tableExportSchema = z.object({
+  format: z.string(),
+  url: z.string(),
+  file_name: z.string(),
+  bytes: z.number(),
+  expires_in: z.number(),
+  badges: z.number().nullish(),
+});
+
+export type TableExport = z.infer<typeof tableExportSchema>;
+
+export interface TableExportBody {
+  format: "xlsx" | "pdf" | "png" | "csv_cf";
+  blueprint_id?: string;
+  saved_table_id?: string;
+  table?: {
+    name?: string;
+    title?: string | null;
+    columns: Array<{ key: string; label: string; type?: string | null }>;
+    rows: Array<{
+      id?: string;
+      index?: number;
+      cells: Record<string, string | number | boolean | null>;
+      element_ids?: string[] | Record<string, string[]>;
+    }>;
+  };
+}
 
 const looseBlueprintSummarySchema = z
   .object({
@@ -343,6 +388,8 @@ export const API_ROUTES = {
   getBlueprint: { method: "GET", template: "/v1/projects/{project_id}/blueprints/{blueprint_id}" },
   getGeometry: { method: "GET", template: "/v1/projects/{project_id}/blueprints/{blueprint_id}/geometry" },
   getTakeoff: { method: "GET", template: "/v1/projects/{project_id}/blueprints/{blueprint_id}/takeoff" },
+  exportPlan: { method: "POST", template: "/v1/projects/{project_id}/blueprints/{blueprint_id}/export" },
+  exportTable: { method: "POST", template: "/v1/projects/{project_id}/export" },
   listFolders: { method: "GET", template: "/v1/projects/{project_id}/blueprints/{blueprint_id}/folders" },
   createFolder: { method: "POST", template: "/v1/projects/{project_id}/blueprints/{blueprint_id}/folders" },
   patchFeatures: { method: "POST", template: "/v1/projects/{project_id}/blueprints/{blueprint_id}/features" },
@@ -593,6 +640,25 @@ export const api = {
 
   getTakeoff: (p: Principal, projectId: string, blueprintId: string) =>
     callApi<TakeoffPage>(p, "getTakeoff", { params: bp(projectId, blueprintId) }),
+
+  exportPlan: (
+    p: Principal,
+    projectId: string,
+    blueprintId: string,
+    body: { element_ids?: string[]; highlight?: string[] },
+  ) =>
+    callApi<PlanExport>(p, "exportPlan", {
+      params: bp(projectId, blueprintId),
+      body,
+      decode: decodeWith(planExportSchema, "exportPlan"),
+    }),
+
+  exportTable: (p: Principal, projectId: string, body: TableExportBody) =>
+    callApi<TableExport>(p, "exportTable", {
+      params: { project_id: projectId },
+      body,
+      decode: decodeWith(tableExportSchema, "exportTable"),
+    }),
 
   createProject: (p: Principal, name: string, description: string) =>
     callApi<ProjectSummary>(p, "createProject", { body: { name, description } }),

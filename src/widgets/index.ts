@@ -11,7 +11,7 @@ const UI_SCHEME = "ui://kamai";
 
 // Hosts cache resource contents by URI for up to about an hour, so any breaking
 // change to a widget needs a new version here.
-export const WIDGET_VERSION = "v28";
+export const WIDGET_VERSION = "v30";
 
 export const WIDGET_NAMES = ["projects", "blueprint", "takeoff", "upload", "iframetest", "table"] as const;
 

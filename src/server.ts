@@ -14,6 +14,8 @@ import {
   geometryPageSchema,
   legendPageSchema,
   openingPieceAttributesSchema,
+  planExportSchema,
+  tableExportSchema,
   projectDetailSchema,
   projectSummarySchema,
   jobSummarySchema,
@@ -25,7 +27,8 @@ import {
 } from "./api.ts";
 import type { GeometryPage, OpeningPieceAttributes } from "./api.ts";
 import type { Principal } from "./auth.ts";
-import { NO_INSTRUCTIONS, QUERY_TOOLS } from "./config.ts";
+import { NO_INSTRUCTIONS, PANEL_SIGN_IN, QUERY_TOOLS } from "./config.ts";
+import { mintPanelCode } from "./panel-code.ts";
 import { BadArgument, MAX_LIMIT, buildElementsPage, invalidateScanCache, listElementsOutput } from "./elements.ts";
 import { toolErrorText } from "./errors.ts";
 import { looseOutput } from "./loose.ts";
@@ -193,6 +196,7 @@ const kamaiAppOutput = z.object({
   // branch instead of the diagnostic it used to fall through to.
   chrome: z.boolean().optional(),
   declared_frame_domains: z.array(z.string()).optional(),
+  panel_sign_in: z.boolean().optional(),
 });
 
 const uploadWidgetOutput = z.object({
@@ -253,6 +257,8 @@ export interface ServerOptions {
   queryTools?: boolean;
   /** Send the server `instructions`. Off emulates hosts that drop them (claude.ai). */
   instructions?: boolean;
+  /** Panel sign-in for open_kamai (KAMAI_PANEL_SIGN_IN=on). Settable so tests can flip it. */
+  panelSignIn?: boolean;
 }
 
 const BASE_INSTRUCTIONS = "Tools for managing Kamai construction-blueprint projects, blueprints, and takeoffs.";
@@ -264,6 +270,7 @@ export function buildServer(
 ): McpServer {
   const queryTools = opts.queryTools ?? QUERY_TOOLS;
   const withInstructions = opts.instructions ?? !NO_INSTRUCTIONS;
+  const panelSignIn = opts.panelSignIn ?? PANEL_SIGN_IN;
   const server = new McpServer(
     { name: "Kamai MCP Server", version: "0.1.0" },
     {
@@ -513,6 +520,137 @@ export function buildServer(
       }
     },
   );
+
+  server.registerTool(
+    "download_plan",
+    {
+      title: "Download marked-up plan",
+      description:
+        "Make a PDF of a processed blueprint with its detected elements drawn on the original " +
+        "drawing, and return a temporary download link. Use this when the user wants the plan " +
+        "as a file, to download, print or send it, with some or all elements highlighted.\n\n" +
+        "Choose what is drawn with `highlight` (what to show, in plain words: doors, windows, " +
+        "rooms, walls, a class such as sink, or a folder name from the drawing) and/or " +
+        "`element_ids` (exact elements, from list_elements or a selection in the plan view). " +
+        "Both together draw the union; neither draws every element. `unmatched_highlight` and " +
+        "`missing_ids` name what matched nothing: tell the user rather than ignore it.\n\n" +
+        "Give the user `url` as a clickable link named by `file_name` and say that it expires " +
+        "after `expires_in` seconds; they can ask again for a fresh one. The first page is the " +
+        "plan, the second a legend of what was highlighted.\n\n" +
+        "Refer to the blueprint and project by name in your replies. Never show a raw id " +
+        "unless the user asks for one.",
+      inputSchema: {
+        blueprint_id: z.string(),
+        project_id: z.string().optional(),
+        highlight: z
+          .array(z.string().min(1).max(100))
+          .max(25)
+          .optional()
+          .describe("What to draw, one entry per kind, e.g. [\"doors\", \"windows\"]. Categories, classes and folder names all work; plurals are fine."),
+        element_ids: z
+          .array(z.string().min(1))
+          .max(5000)
+          .optional()
+          .describe("Exact element ids to draw, as list_elements or the plan view gives them."),
+      },
+      outputSchema: looseOutput(planExportSchema),
+      annotations: READONLY,
+      // The plan view's Download PDF button calls this; ChatGPT gates widget calls on the flag.
+      _meta: { ui: { visibility: ["model", "app"] }, "openai/widgetAccessible": true },
+    },
+    async ({ blueprint_id, project_id, highlight, element_ids }) => {
+      try {
+        const projectId = await resolveProject(principal, blueprint_id, project_id);
+        // A model writes "doors, windows" as one entry as often as two.
+        const terms = (highlight ?? []).flatMap((h) => h.split(",")).map((h) => h.trim()).filter(Boolean);
+        return text(
+          await api.exportPlan(principal, projectId, blueprint_id, {
+            ...(terms.length ? { highlight: terms } : {}),
+            ...(element_ids?.length ? { element_ids } : {}),
+          }),
+        );
+      } catch (err) {
+        fail(err, "download_plan");
+      }
+    },
+  );
+
+  if (queryTools) {
+    const cellValue = z.union([z.string(), z.number(), z.boolean(), z.null()]);
+    server.registerTool(
+      "export",
+      {
+        title: "Export a table",
+        description:
+          "Make a file from a Kamai table and return a temporary download link. Formats: " +
+          "`xlsx` (Excel: the table, plus the blueprint picture with each row's elements " +
+          "numbered #N), `pdf` (the original blueprint page with those elements drawn on it, then " +
+          "the table), `png` (only the annotated blueprint picture), `csv_cf` (a CSV in the " +
+          "Contractor Foreman import layout).\n\n" +
+          "Pass the table you already have: its `columns` and `rows` as count_elements, " +
+          "find_elements or render_table returned them, with each row's element ids so the " +
+          "picture can number them. Or pass `saved_table_id` for a table saved in Kamai. Give " +
+          "`blueprint_id` for the sheet the picture is drawn on.\n\n" +
+          "Give the user `url` as a clickable link named by `file_name` and say that it expires " +
+          "after `expires_in` seconds; they can ask again for a fresh one. For a marked-up plan " +
+          "without a table, use download_plan.\n\n" +
+          "Refer to the blueprint and project by name in your replies. Never show a raw id " +
+          "unless the user asks for one.",
+        inputSchema: {
+          project_id: z.string(),
+          format: z.enum(["xlsx", "pdf", "png", "csv_cf"]),
+          blueprint_id: z.string().optional(),
+          saved_table_id: z.string().optional(),
+          table: z
+            .looseObject({
+              name: z.string().max(200).optional(),
+              title: z.string().max(200).nullish(),
+              columns: z
+                .array(z.looseObject({ key: z.string(), label: z.string(), type: z.string().nullish() }))
+                .min(1)
+                .max(100),
+              rows: z
+                .array(
+                  z.looseObject({
+                    id: z.string().optional(),
+                    index: z.number().optional(),
+                    cells: z.record(z.string(), cellValue),
+                    element_ids: z
+                      .union([z.array(z.string()).max(5000), z.record(z.string(), z.array(z.string()))])
+                      .optional(),
+                  }),
+                )
+                .max(5000),
+            })
+            .optional()
+            .describe("The table to export, as render_table, count_elements or find_elements returned it."),
+        },
+        outputSchema: looseOutput(tableExportSchema),
+        annotations: READONLY,
+        _meta: { ui: { visibility: ["model", "app"] }, "openai/widgetAccessible": true },
+      },
+      async ({ project_id, format, blueprint_id, saved_table_id, table }) => {
+        try {
+          if (!table && !saved_table_id) {
+            throw new BadArgument("Pass either `table` or `saved_table_id`.");
+          }
+          if ((format === "png" || format === "pdf") && !blueprint_id && !saved_table_id) {
+            throw new BadArgument("A png or pdf export needs `blueprint_id`, the sheet to draw on.");
+          }
+          return text(
+            await api.exportTable(principal, project_id, {
+              format,
+              ...(blueprint_id ? { blueprint_id } : {}),
+              ...(saved_table_id ? { saved_table_id } : {}),
+              ...(table ? { table } : {}),
+            }),
+          );
+        } catch (err) {
+          fail(err, "export");
+        }
+      },
+    );
+  }
 
   // Not a widget. view_blueprint already fetches this exact geometry and hands it to a
   // canvas, which is why the gap was easy to miss: the shapes were on screen but never in
@@ -1214,9 +1352,35 @@ export function buildServer(
         expand_button: expand_button ?? true,
         chrome: false,
         declared_frame_domains: [...FRAME_ORIGINS],
+        // Hosts pin descriptors: with the flag off the result must not gain a field.
+        ...(panelSignIn ? { panel_sign_in: true } : {}),
       });
     },
   );
+
+  if (panelSignIn) {
+    registerAppTool(
+      server,
+      "open_kamai_session",
+      {
+        title: "Sign the Kamai panel in",
+        description:
+          "Called by the Kamai panel itself, never by the model: a one-time code, valid for one " +
+          "minute, that signs the framed Kamai app in as the user this connector acts for.",
+        outputSchema: looseOutput(z.object({ panel_code: z.string(), expires_in: z.number() })),
+        annotations: READONLY,
+        // App-only: model-visible output would keep this bearer code in the transcript.
+        _meta: APP_ONLY,
+      },
+      async () => {
+        try {
+          return text(await mintPanelCode(principal));
+        } catch (err) {
+          fail(err, "open_kamai_session");
+        }
+      },
+    );
+  }
 
   return server;
 }

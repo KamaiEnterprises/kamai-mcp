@@ -290,6 +290,18 @@ export async function callTool<T>(name: string, args: JsonRecord = {}): Promise<
   return toolPayload(await rpc("tools/call", { name, arguments: args })) as T;
 }
 
+// Ask the host to send `text` as the user's next chat message. MCP Apps hosts take
+// ui/message; Open WebUI's bridge answers no RPC, but its chat accepts a prompt posted by
+// its own embed frame (input:prompt:submit) and shows the user a confirmation first.
+export function sendPrompt(text: string): Promise<unknown> {
+  if (window.openai?.sendFollowUpMessage) return window.openai.sendFollowUpMessage({ prompt: text });
+  if (silentHost) {
+    window.parent.postMessage({ type: "input:prompt:submit", text }, "*");
+    return Promise.resolve();
+  }
+  return rpc("ui/message", { role: "user", content: [{ type: "text", text }] });
+}
+
 export function updateModelContext(text: string): Promise<unknown> {
   try {
     window.openai?.setWidgetState?.({ note: text });

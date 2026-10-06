@@ -9,6 +9,7 @@ import {
   PUBLIC_URL,
   RESOURCE_URL,
 } from "./config.ts";
+import { flushBeforeResponse, instrumentServer } from "./analytics.ts";
 import { protectedResourceMetadata, requireBearer } from "./auth.ts";
 import { logEvent } from "./log.ts";
 import { buildServer } from "./server.ts";
@@ -212,6 +213,11 @@ export async function handleMcp(req: Request, res: Response): Promise<void> {
   const userAgent = req.get("user-agent") ?? "";
   // openai-mcp is ChatGPT's and Codex's connector; stateless, so the hint is per request.
   const server = buildServer(req.principal!, { chatgpt: /\bopenai-mcp\//i.test(userAgent) });
+  instrumentServer(server, req.principal!);
+  // One message per request (batches are refused), so its method says whether the answer
+  // carries a call worth holding for; handshakes and listings never wait on PostHog.
+  const method = (req.body as { method?: unknown }).method;
+  if (method === "tools/call" || method === "resources/read") flushBeforeResponse(transport);
   await server.connect(transport);
   await transport.handleRequest(req, res, req.body);
 }

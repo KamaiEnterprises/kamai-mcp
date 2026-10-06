@@ -65,3 +65,14 @@ export function relativeTime(timestamp?: number | null): string {
   const days = Math.floor(seconds / 86400);
   return days < 30 ? `${days}d ago` : new Date(timestamp).toLocaleDateString();
 }
+
+/** What to tell the chat when the widget cannot call download_plan itself. */
+export function downloadPrompt(name: string, ids: string[], classes: string[]): string {
+  const what = [
+    classes.length ? `highlight: ${JSON.stringify(classes)}` : "",
+    ids.length ? `element_ids: ${JSON.stringify(ids)}` : "",
+  ].filter(Boolean).join(", ");
+  return what
+    ? `Download the marked-up plan PDF of "${name}" with only these highlighted (${what}).`
+    : `Download the marked-up plan PDF of "${name}" with every element highlighted.`;
+}

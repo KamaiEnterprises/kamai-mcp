@@ -29,8 +29,10 @@
   "dependencies": {
     "@modelcontextprotocol/ext-apps": "1.7.5",
     "@modelcontextprotocol/sdk": "1.30.0",
+    "@posthog/mcp": "0.21.2",
     "express": "5.2.1",
     "jose": "6.2.4",
+    "posthog-node": "5.55.0",
     "zod": "4.1.13"
   },
   "devDependencies": {

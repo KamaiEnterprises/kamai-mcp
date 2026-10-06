@@ -42,3 +42,10 @@ export const QUERY_TOOLS = (process.env.KAMAI_QUERY_TOOLS ?? "").trim() === "on"
 // Claude.ai drops a server's `instructions`. Set this to test the tool descriptions on
 // their own, the way that host reads them.
 export const NO_INSTRUCTIONS = (process.env.KAMAI_MCP_NO_INSTRUCTIONS ?? "").trim() === "1";
+
+// Needs KAMAI_AUTH_PANEL_CODE on in the same environment, or every open_kamai_session call fails.
+export const PANEL_SIGN_IN = (process.env.KAMAI_PANEL_SIGN_IN ?? "").trim() === "on";
+
+// PostHog MCP Analytics. No token, no client: nothing is captured or sent.
+export const POSTHOG_PROJECT_TOKEN = (process.env.POSTHOG_PROJECT_TOKEN ?? "").trim();
+export const POSTHOG_HOST = trim(process.env.POSTHOG_HOST, "https://eu.i.posthog.com");

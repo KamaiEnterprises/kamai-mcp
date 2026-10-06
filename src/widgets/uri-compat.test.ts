@@ -46,7 +46,7 @@ describe("widget resource URIs", () => {
 
   it("serves the table widget at the current version, with GCS allowed for the plan image", async () => {
     const client = await connect();
-    expect(widgetUri("table")).toBe("ui://kamai/table@v28.html");
+    expect(widgetUri("table")).toBe("ui://kamai/table@v30.html");
     const result = await client.readResource({ uri: widgetUri("table") });
     expect(textOf(result)).toContain("<!doctype html>");
     const meta = result.contents[0]?._meta as { ui?: { csp?: { resourceDomains?: string[] } } } | undefined;

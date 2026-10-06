@@ -15,6 +15,7 @@ Kamai's OAuth authorization server. It holds no Kamai secrets.
 | `view_takeoff` | Measured take-off quantities as a sortable table |
 | `list_elements` | Per-element rows (rooms, walls, doors, windows, objects) with outlines |
 | `list_folders` | A blueprint's legend folders |
+| `download_plan` | A PDF of a processed blueprint with its detected elements highlighted, as a temporary download link |
 | `update_elements`, `move_elements`, `create_folder` | Rename, recolour and refile elements; create a folder |
 | `set_opening_height` | Store a user-stated height, or a door/window tag, on wall-surface opening pieces |
 | `create_project`, `update_project` | Create or rename a project |
