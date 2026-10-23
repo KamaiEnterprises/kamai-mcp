@@ -4,7 +4,7 @@ import { AlertTriangle, Eye, LoaderCircle } from "lucide-react";
 import { callTool, hostCanCallTools } from "./bridge";
 import { BlueprintPanel } from "./BlueprintWidget";
 import { ActionError, BrandHeader, Card, LoadingState } from "./shared";
-import { highlightFor, idCount, rowElements } from "./table-rows";
+import { highlightFor, idCount, rowElements, sheetsInOrder } from "./table-rows";
 import type { BlueprintData, Highlight, RowElements, TableColumn, TableData, TableRow } from "./types";
 import { useWidgetData } from "./useWidgetData";
 
@@ -70,7 +70,7 @@ export function TableWidget() {
     try {
       const resolved = elements ?? (await rowElements(callKamai, data, row));
       if (resolved.problem && !idCount(resolved.element_ids)) throw new Error(`This row ${resolved.problem}.`);
-      const target = blueprintId ?? Object.entries(resolved.element_ids).find(([, ids]) => ids.length)?.[0];
+      const target = blueprintId ?? sheetsInOrder(resolved.element_ids, data.blueprints)[0]?.[0];
       if (!target) throw new Error("This row has no elements to show.");
       const ids = resolved.element_ids[target] ?? [];
       const [blueprint, outlines] = await Promise.all([
@@ -99,7 +99,7 @@ export function TableWidget() {
 
   if (plan) {
     const shown = idCount(plan.elements.element_ids);
-    const blueprints = Object.entries(plan.elements.element_ids).filter(([, ids]) => ids.length);
+    const blueprints = sheetsInOrder(plan.elements.element_ids, data.blueprints);
     const banner = (
       <Card className="mb-3 flex flex-wrap items-center gap-3 p-3 text-sm">
         <span className="font-medium">{plan.label}</span>

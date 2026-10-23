@@ -15,21 +15,24 @@ import {
   legendPageSchema,
   openingPieceAttributesSchema,
   planExportSchema,
-  tableExportSchema,
+  exportResultSchema,
   projectDetailSchema,
   projectSummarySchema,
   jobSummarySchema,
+  latestUploadSchema,
+  noticeOf,
   resolveProject,
   rgbaSchema,
   takeoffPageSchema,
   uploadResultSchema,
   uploadTicketSchema,
 } from "./api.ts";
-import type { GeometryPage, OpeningPieceAttributes } from "./api.ts";
+import type { GeometryPage, OpeningPiecesWritten } from "./api.ts";
 import type { Principal } from "./auth.ts";
-import { NO_INSTRUCTIONS, PANEL_SIGN_IN, QUERY_TOOLS } from "./config.ts";
+import { HOST_PROBE, MARKUPS, NO_INSTRUCTIONS, OPEN_KAMAI_LINK, PANEL_SIGN_IN, PRINTED_TABLES, QUERY_TOOLS, ROTATION, clientFamily } from "./config.ts";
+import { registerHostProbe } from "./host-probe.ts";
 import { mintPanelCode } from "./panel-code.ts";
-import { BadArgument, MAX_LIMIT, buildElementsPage, invalidateScanCache, listElementsOutput } from "./elements.ts";
+import { BadArgument, MAX_LIMIT, buildElementsPage, listElementsOutput } from "./elements.ts";
 import { toolErrorText } from "./errors.ts";
 import { looseOutput } from "./loose.ts";
 import {
@@ -37,14 +40,19 @@ import {
   DESTRUCTIVE_IDEMPOTENT,
   READONLY,
   WRITE,
+  fileLink,
   text,
 } from "./tool-kit.ts";
 import { registerListBlueprints } from "./query/list-blueprints.ts";
+import { registerMarkupTools } from "./markups.ts";
+import { selectionSchema } from "./query/filters.ts";
 import { registerQueryTools } from "./query/tools.ts";
+import { refreshVocabulary } from "./query/vocabulary.ts";
 import {
   EDIT_IDS_GUIDE,
   EDIT_IDS_SENTENCE,
   LIST_ELEMENTS_PREFIX,
+  RESULT_LINK,
   SERVER_INSTRUCTIONS,
   VIEW_BLUEPRINT_SUFFIX,
   VIEW_TAKEOFF_HEAD,
@@ -71,33 +79,8 @@ const UI_SCHEME_PREFIX = "ui://kamai/";
 // caller to run, so the three cannot drift apart.
 const OPENING_PIECE_CLASS = "wall_surface_with_opening";
 
-// The API route is per feature, so a selection is N requests, not one. Four at
-// a time: enough that a normal selection finishes inside a turn, few enough
-// that a large one cannot arrive as a burst the API layer sheds. A shed
-// request is an element the user believes was written.
-const WRITE_CONCURRENCY = 4;
-
-// And a ceiling on the fan-out itself. At one request per element a selection
-// of thousands is not a slow call, it is a call that never returns inside a
-// turn, and the caller is better told to split it than left waiting.
+// The API route's own ceiling on one selection; past it the caller is told to split.
 const MAX_WRITE_IDS = 200;
-
-/** Run `work` over `items`, at most `limit` in flight, results in input order. */
-async function mapBounded<T, R>(
-  items: readonly T[],
-  limit: number,
-  work: (item: T) => Promise<R>,
-): Promise<R[]> {
-  const out = new Array<R>(items.length);
-  let next = 0;
-  const worker = async () => {
-    for (let i = next++; i < items.length; i = next++) {
-      out[i] = await work(items[i]!);
-    }
-  };
-  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
-  return out;
-}
 
 /** Where the ids of opening pieces come from, in the words the tool list at hand can
  * honour: find_elements exists only with the query tools. */
@@ -106,19 +89,10 @@ const openingPieceIds = (queryTools: boolean): string =>
     ? `Get the ids from find_elements with category opening_pieces (or list_elements with cls ${OPENING_PIECE_CLASS}).`
     : `Get the ids from list_elements with cls set to ${OPENING_PIECE_CLASS}.`;
 
-/** Refusals that are the same for every element of a set_opening_height call, because
- * every element gets the same body: once one arrives, the rest are not sent. */
-const STOPS_FAN_OUT = new Set(["needs_scale", "invalid_request", "route_missing"]);
-
-/** Why one opening piece was turned away, phrased so the model can fix it in this turn.
- *
- * The wrong-class refusal is checked first, by status: it is per element (a wall in a
- * selection of opening pieces), and the API layer sends it as invalid_request with 409,
- * so keying on the code alone would stop the whole fan-out over one wrong id. Then the
- * `code`; the status-only branches are for an API layer that answers with a bare
- * `detail` string. The status itself never reaches the prose. */
-function refusalFor(err: ApiError, queryTools: boolean): string {
-  if (err.status === 409) {
+/** Why one opening piece was turned away (the API's per-element `code`), phrased so the
+ * model can fix it in this turn. */
+function elementRefusal(code: string, queryTools: boolean): string {
+  if (code === "wrong_class") {
     return (
       "That element is not a wall-surface opening piece, so no height and no door/window tag " +
       `can be stored on it. Only elements of class ${OPENING_PIECE_CLASS} carry those two ` +
@@ -126,21 +100,15 @@ function refusalFor(err: ApiError, queryTools: boolean): string {
       "is not one of them, and its tag is the mark printed on the sheet, which is never rewritten."
     );
   }
-  if (err.code === "needs_scale") {
-    return toolErrorText(err, "set_opening_height", { queryTools });
-  }
+  return "No element with that id is on this sheet. Read the ids again with list_elements.";
+}
+
+/** A refusal of the whole call, which Kamai gives before writing anything. */
+function callRefusal(err: ApiError, queryTools: boolean): string | null {
+  if (err.code === "needs_scale") return toolErrorText(err, "set_opening_height", { queryTools });
   if (err.code === "invalid_request" && err.detail) return err.detail;
   if (err.code === "route_missing") return err.message;
-  if (err.status === 400) {
-    return (
-      "This sheet has no usable scale, so a height cannot be converted into the drawing's " +
-      "units. The sheet's scale has to be set first, then the height can be written."
-    );
-  }
-  if (err.status === 404) {
-    return "No element with that id is on this sheet. Read the ids again with list_elements.";
-  }
-  return toolErrorText(err, "set_opening_height", { queryTools });
+  return null;
 }
 
 // Declared where they are built. These four shapes are assembled in this file rather
@@ -151,9 +119,19 @@ const listProjectsOutput = z.object({
 });
 
 const listJobsOutput = z.object({
+  latest_upload: latestUploadSchema.nullish(),
   jobs: z.array(jobSummarySchema),
   count: z.number(),
+  next_offset: z.number().nullish(),
+  older_not_listed: z.boolean().nullish(),
 });
+
+// One page of jobs: a project with over a hundred jobs listed them in more characters than claude.ai
+// takes from one tool result.
+const JOBS_PAGE = 25;
+// Kamai is asked for the first offset + limit + 1 jobs and the page is cut here: right on a Kamai that ignores
+// limit and offset too. The API layer takes up to 1000.
+const JOBS_MAX_OFFSET = 899;
 
 // One PATCH per element, one row per element in the answer. `written` carries
 // what the sheet now stores for each element the write reached, and `refused`
@@ -174,6 +152,7 @@ const projectsWidgetOutput = z.object({
     z.object({
       id: z.string(),
       name: z.string(),
+      app_url: z.string().nullish(),
       blueprints: z.array(blueprintSummarySchema),
     }),
   ),
@@ -182,7 +161,7 @@ const projectsWidgetOutput = z.object({
 
 // view_blueprint pages the geometry itself and drops the cursor before handing the
 // page to the widget, so its output is the page minus that one field.
-const blueprintWidgetOutput = geometryPageSchema.omit({ next_cursor: true });
+const blueprintWidgetOutput = geometryPageSchema.omit({ next_cursor: true, classes: true });
 
 const kamaiAppOutput = z.object({
   url: z.string(),
@@ -199,9 +178,21 @@ const kamaiAppOutput = z.object({
   panel_sign_in: z.boolean().optional(),
 });
 
+// export's element_ids declares only the {blueprint_id: [ids]} map (Microsoft 365 Copilot never offered the tool
+// while it was array-or-map); a bare array is still taken and handed to the API exactly as it came.
+const BARE_IDS = "\u0000bare";
+const bareIdsBack = <T extends { rows: Array<Record<string, unknown>> }>(table: T): T => ({
+  ...table,
+  rows: table.rows.map((row) => {
+    const ids = row.element_ids as Record<string, string[]> | undefined;
+    return ids && Object.keys(ids).length === 1 && BARE_IDS in ids ? { ...row, element_ids: ids[BARE_IDS] } : row;
+  }),
+});
+
 const uploadWidgetOutput = z.object({
-  projects: z.array(z.object({ id: z.string(), name: z.string() })),
+  projects: z.array(z.object({ id: z.string(), name: z.string(), app_url: z.string().nullish() })),
   project_id: z.string().nullable(),
+  app_url: z.string().nullish(),
   state: z.string(),
 });
 
@@ -234,34 +225,45 @@ function widgetResult(
 }
 
 // What the model needs to talk about a blueprint: its identity, state, scale and what
-// is on it by class. Rendering data (outlines, image) stays in structuredContent.
+// is on it by class (Kamai's counts over the whole sheet). Rendering data (outlines, image)
+// stays in structuredContent.
 function blueprintSummary(page: Omit<GeometryPage, "next_cursor">) {
   const { image: _image, features, ...rest } = page;
-  const classes = new Map<string, number>();
-  for (const feature of features) classes.set(feature.cls, (classes.get(feature.cls) ?? 0) + 1);
-  return {
-    ...rest,
-    features_shown: features.length,
-    classes: [...classes.entries()].map(([cls, count]) => ({ cls, count })),
-  };
+  return { ...rest, features_shown: features.length, classes: page.classes ?? null };
 }
 
 export interface HostHints {
   // Only ChatGPT fills ingest_blueprint_from_chat's file parameter. Advertised anywhere else it
   // is the tool a model reaches for first on "upload this PDF", and it can only fail.
   chatgpt?: boolean;
+  // The calling MCP client's User-Agent, for the host probe's log line: the frame cannot see
+  // which backend relayed its call, and that is the most reliable host signal there is.
+  userAgent?: string;
 }
 
 export interface ServerOptions {
   /** Register the query tools (KAMAI_QUERY_TOOLS=on). Settable so tests can flip it. */
   queryTools?: boolean;
+  /** Register get_printed_tables with the query tools (KAMAI_PRINTED_TABLES=on). Settable so tests can flip it. */
+  printedTables?: boolean;
+  /** Register set_rotation with the query tools (on unless KAMAI_ROTATION=off). Settable so tests can flip it. */
+  rotation?: boolean;
+  /** The markup tools and download_plan's include_markups (KAMAI_MARKUPS=on). Settable so tests can flip it. */
+  markups?: boolean;
   /** Send the server `instructions`. Off emulates hosts that drop them (claude.ai). */
   instructions?: boolean;
   /** Panel sign-in for open_kamai (KAMAI_PANEL_SIGN_IN=on). Settable so tests can flip it. */
   panelSignIn?: boolean;
+  /** The host-capability probe (KAMAI_HOST_PROBE, default on in dev/debug only). Settable so tests can flip it. */
+  hostProbe?: boolean;
+  /** Client families that get open_kamai as a link card (KAMAI_OPEN_KAMAI_LINK). Settable so tests can flip it. */
+  openKamaiLink?: Set<string>;
 }
 
-const BASE_INSTRUCTIONS = "Tools for managing Kamai construction-blueprint projects, blueprints, and takeoffs.";
+const BASE_INSTRUCTIONS =
+  "Tools for managing Kamai construction-blueprint projects, blueprints, and takeoffs. After an action (create, " +
+  "update, move, cancel, upload, download), give its `app_url` as a link named \"Open in Kamai\", never as a bare " +
+  "URL; ids are for tool calls, never shown to the user unless they ask.";
 
 export function buildServer(
   principal: Principal,
@@ -271,6 +273,8 @@ export function buildServer(
   const queryTools = opts.queryTools ?? QUERY_TOOLS;
   const withInstructions = opts.instructions ?? !NO_INSTRUCTIONS;
   const panelSignIn = opts.panelSignIn ?? PANEL_SIGN_IN;
+  const hostProbe = opts.hostProbe ?? HOST_PROBE;
+  const openAsLink = (opts.openKamaiLink ?? OPEN_KAMAI_LINK).has(clientFamily(host.userAgent));
   const server = new McpServer(
     { name: "Kamai MCP Server", version: "0.1.0" },
     {
@@ -286,10 +290,14 @@ export function buildServer(
     throw new Error(toolErrorText(err, tool, { queryTools }));
   };
 
-  const scanKey = (projectId: string, blueprintId: string) =>
-    `${principal.uid}\u0000${principal.token}\u0000${projectId}\u0000${blueprintId}`;
-
-  const ctx: ToolContext = { principal, queryTools, fail, scanKey };
+  const ctx: ToolContext = {
+    principal,
+    queryTools,
+    printedTables: opts.printedTables ?? PRINTED_TABLES,
+    rotation: opts.rotation ?? ROTATION,
+    fail,
+  };
+  const markups = opts.markups ?? MARKUPS;
 
   // The id is load-bearing — it is in every cached ui:// URI — but the label is what a
   // host shows in a resource list, so it should read like the product, not the module.
@@ -300,11 +308,13 @@ export function buildServer(
     upload: "Kamai upload",
     iframetest: "Kamai app",
     table: "Kamai table",
+    probe: "Kamai host probe",
   };
 
-  // The table widget is listed only with the query tools, so resources/list with the flag
-  // off is what it was. The any-version template below still serves it either way.
-  for (const name of WIDGET_NAMES.filter((n) => queryTools || n !== "table")) {
+  // The table widget is listed only with the query tools, and the probe only with its flag,
+  // so resources/list with the flags off is what it was. The any-version template below
+  // still serves them either way.
+  for (const name of WIDGET_NAMES.filter((n) => (queryTools || n !== "table") && (hostProbe || n !== "probe"))) {
     registerAppResource(
       server,
       RESOURCE_LABEL[name],
@@ -338,7 +348,11 @@ export function buildServer(
       const name = String(variables.name);
       // -32002 is the spec's resource-not-found; a bare throw surfaces as a generic
       // -32603 InternalError, which reads as a server bug rather than a bad URI.
-      if (!isWidgetName(name)) throw new McpError(-32002, `Unknown Kamai widget: ${name}`);
+      // The probe resolves only where its tools are registered, so prod answers for it
+      // as for any unknown name.
+      if (!isWidgetName(name) || (name === "probe" && !hostProbe)) {
+        throw new McpError(-32002, `Unknown Kamai widget: ${name}`);
+      }
       return {
         contents: [
           { uri: uri.href, mimeType: UI_MIME, text: widgetHtml(name), _meta: resourceMeta(name) },
@@ -361,7 +375,8 @@ export function buildServer(
     async () => {
       try {
         const page = await api.listProjects(principal);
-        return text({ projects: page.items, count: page.items.length });
+        const notice = noticeOf(page);
+        return text({ projects: page.items, count: page.items.length, ...(notice ? { notice } : {}) });
       } catch (err) {
         fail(err, "list_projects");
       }
@@ -389,13 +404,17 @@ export function buildServer(
         const projects = page.items.map((p) => ({
           id: p.id,
           name: p.name,
+          ...(p.app_url ? { app_url: p.app_url } : {}),
           blueprints: (p.blueprints ?? []).map((b) => ({
             id: b.id,
             name: b.name,
             ready: b.ready,
           })),
         }));
-        return widgetResult("projects", projectsWidgetOutput, { projects, count: projects.length });
+        const notice = noticeOf(page);
+        // The notice goes to the model only: structuredContent keeps the closed schema hosts have pinned.
+        return widgetResult("projects", projectsWidgetOutput, { projects, count: projects.length },
+          { projects, count: projects.length, ...(notice ? { notice } : {}) });
       } catch (err) {
         fail(err, "view_projects");
       }
@@ -403,9 +422,14 @@ export function buildServer(
   );
 
   registerListBlueprints(server, ctx);
+  if (markups) registerMarkupTools(server, ctx);
   // Behind KAMAI_QUERY_TOOLS: every one of these needs an API route an older API layer
   // does not serve.
-  if (queryTools) registerQueryTools(server, ctx);
+  if (queryTools) {
+    // Builds this request's enums from the vocabulary as it is; a due re-read lands for later ones.
+    void refreshVocabulary(() => api.getVocabulary(principal));
+    registerQueryTools(server, ctx);
+  }
 
   registerAppTool(
     server,
@@ -476,7 +500,11 @@ export function buildServer(
     async ({ blueprint_id, project_id }) => {
       try {
         const projectId = await resolveProject(principal, blueprint_id, project_id);
-        const page = await api.getGeometry(principal, projectId, blueprint_id);
+        const page = await api.getGeometry(principal, projectId, blueprint_id, undefined, undefined, { include: "classes" });
+        // A route without include=classes would leave the model no class counts at all.
+        if (page.state === "ready" && !Array.isArray(page.classes)) {
+          throw new Error("geometry route did not return the class counts");
+        }
         const { next_cursor, ...widgetPayload } = page;
         return widgetResult("blueprint", blueprintWidgetOutput, widgetPayload, blueprintSummary(widgetPayload));
       } catch (err) {
@@ -526,6 +554,7 @@ export function buildServer(
     {
       title: "Download marked-up plan",
       description:
+        (queryTools ? "Older name for `export` of a plan; prefer export. " : "") +
         "Make a PDF of a processed blueprint with its detected elements drawn on the original " +
         "drawing, and return a temporary download link. Use this when the user wants the plan " +
         "as a file, to download, print or send it, with some or all elements highlighted.\n\n" +
@@ -534,11 +563,12 @@ export function buildServer(
         "`element_ids` (exact elements, from list_elements or a selection in the plan view). " +
         "Both together draw the union; neither draws every element. `unmatched_highlight` and " +
         "`missing_ids` name what matched nothing: tell the user rather than ignore it.\n\n" +
-        "Give the user `url` as a clickable link named by `file_name` and say that it expires " +
-        "after `expires_in` seconds; they can ask again for a fresh one. The first page is the " +
-        "plan, the second a legend of what was highlighted.\n\n" +
-        "Refer to the blueprint and project by name in your replies. Never show a raw id " +
-        "unless the user asks for one.",
+        "Give the user `url` as a clickable link in your reply; never download or open it " +
+        "yourself, a code sandbox cannot reach it. Name the link by `file_name` and say that it expires " +
+        "after `expires_in` seconds; they can ask again for a fresh one. Set `legend: true` only when " +
+        "the user asks for a legend: it adds a page naming each kind drawn, its colour and count.\n\n" +
+        "Refer to the blueprint and project by name in your replies. " +
+        RESULT_LINK,
       inputSchema: {
         blueprint_id: z.string(),
         project_id: z.string().optional(),
@@ -552,21 +582,32 @@ export function buildServer(
           .max(5000)
           .optional()
           .describe("Exact element ids to draw, as list_elements or the plan view gives them."),
+        legend: z.boolean().optional().describe("Add a legend page. Only when the user asks for one."),
+        ...(markups
+          ? {
+              include_markups: z
+                .boolean()
+                .optional()
+                .describe("Also draw the sheet's markups (revision clouds, highlights, notes). Off unless the user asks for them."),
+            }
+          : {}),
       },
       outputSchema: looseOutput(planExportSchema),
       annotations: READONLY,
       // The plan view's Download PDF button calls this; ChatGPT gates widget calls on the flag.
       _meta: { ui: { visibility: ["model", "app"] }, "openai/widgetAccessible": true },
     },
-    async ({ blueprint_id, project_id, highlight, element_ids }) => {
+    async ({ blueprint_id, project_id, highlight, element_ids, legend, include_markups }) => {
       try {
         const projectId = await resolveProject(principal, blueprint_id, project_id);
         // A model writes "doors, windows" as one entry as often as two.
         const terms = (highlight ?? []).flatMap((h) => h.split(",")).map((h) => h.trim()).filter(Boolean);
-        return text(
+        return fileLink(
           await api.exportPlan(principal, projectId, blueprint_id, {
             ...(terms.length ? { highlight: terms } : {}),
             ...(element_ids?.length ? { element_ids } : {}),
+            ...(legend ? { legend: true } : {}),
+            ...(markups && include_markups ? { include_markups: true } : {}),
           }),
         );
       } catch (err) {
@@ -580,27 +621,50 @@ export function buildServer(
     server.registerTool(
       "export",
       {
-        title: "Export a table",
+        title: "Export a plan or a table",
         description:
-          "Make a file from a Kamai table and return a temporary download link. Formats: " +
-          "`xlsx` (Excel: the table, plus the blueprint picture with each row's elements " +
-          "numbered #N), `pdf` (the original blueprint page with those elements drawn on it, then " +
-          "the table), `png` (only the annotated blueprint picture), `csv_cf` (a CSV in the " +
-          "Contractor Foreman import layout).\n\n" +
-          "Pass the table you already have: its `columns` and `rows` as count_elements, " +
-          "find_elements or render_table returned them, with each row's element ids so the " +
-          "picture can number them. Or pass `saved_table_id` for a table saved in Kamai. Give " +
-          "`blueprint_id` for the sheet the picture is drawn on.\n\n" +
-          "Give the user `url` as a clickable link named by `file_name` and say that it expires " +
-          "after `expires_in` seconds; they can ask again for a fresh one. For a marked-up plan " +
-          "without a table, use download_plan.\n\n" +
-          "Refer to the blueprint and project by name in your replies. Never show a raw id " +
-          "unless the user asks for one.",
+          "Make a file of Kamai data and return a temporary download link: a marked-up plan, or a table.\n\n" +
+          "A plan: give `blueprint_id` and nothing of a table. The file is a PDF of the original drawing " +
+          "with the detected elements drawn on it. Choose what is drawn with `highlight` (what to show, in " +
+          "plain words: doors, windows, rooms, walls, a class such as sink, or a folder name from the drawing) " +
+          "and/or `element_ids` (exact elements); both together draw the union, neither draws every element. " +
+          "Set `legend: true` only when the user asks for a legend: it adds a page naming each kind drawn, its " +
+          "colour and count. `unmatched_highlight` and `missing_ids` name what matched nothing: tell the user " +
+          "rather than ignore it.\n\n" +
+          "A table: give `project_id` and pass `selection`, the selection of a count_elements, find_elements, " +
+          "calculate_wall_surface_area or render_table result: Kamai builds the table from it with " +
+          "every element of every row, so each is numbered. Set `language` to the language you are " +
+          "writing in and `name` to the file's title. Pass `table` (columns and rows as render_table " +
+          "returned them) only for a table Kamai cannot build, or `saved_table_id` for a table saved in Kamai. " +
+          "Formats: `xlsx` (Excel: the table, plus the plan picture with each row's elements numbered #N; " +
+          "`include_plan: false` leaves the picture out), `pdf` (the table alone; `include_plan: true` puts " +
+          "the plan with each row's elements numbered #N first, so plan and table are one PDF), `png` (only " +
+          "the numbered plan picture), `csv_cf` (a CSV in the Contractor Foreman import layout). Give " +
+          "`blueprint_id` for the sheet the plan is drawn on. When the rows come from several sheets, a pdf " +
+          "with `include_plan` takes `blueprint_ids` instead: one drawing page per sheet in that order, the " +
+          "elements numbered #N across all of them, then the table.\n\n" +
+          "This is the way to make a file of Kamai data: never build a spreadsheet, PDF or CSV " +
+          "yourself in a code sandbox, it would number nothing on the plan.\n\n" +
+          "Give the user `url` as a clickable link in your reply; never download or open it " +
+          "yourself, a code sandbox cannot reach it. Name the link by `file_name` and say that it expires " +
+          "after `expires_in` seconds; they can ask again for a fresh one.\n\n" +
+          "Refer to the blueprint and project by name in your replies. " +
+          RESULT_LINK,
         inputSchema: {
-          project_id: z.string(),
-          format: z.enum(["xlsx", "pdf", "png", "csv_cf"]),
+          project_id: z.string().optional().describe("The project. Required for a table; a plan finds it from `blueprint_id`."),
+          format: z.enum(["xlsx", "pdf", "png", "csv_cf"]).optional().describe("A table's file format; a plan is always a pdf."),
           blueprint_id: z.string().optional(),
+          blueprint_ids: z.array(z.string().min(1)).min(1).max(100).optional(),
           saved_table_id: z.string().optional(),
+          selection: selectionSchema
+            .optional()
+            .describe("The `selection` of a count_elements, find_elements, calculate_wall_surface_area or render_table result."),
+          name: z.string().max(200).optional().describe("The table's title in the file."),
+          language: z
+            .string()
+            .regex(/^[a-z]{2}$/)
+            .optional()
+            .describe("Two-letter code of the language you are writing in, for the column labels."),
           table: z
             .looseObject({
               name: z.string().max(200).optional(),
@@ -615,34 +679,105 @@ export function buildServer(
                     id: z.string().optional(),
                     index: z.number().optional(),
                     cells: z.record(z.string(), cellValue),
+                    // One form, the {blueprint_id: [ids]} map the table tools return: Microsoft 365 Copilot
+                    // never offered this tool while it was array-or-map.
+                    // A bare array (the older form) is still taken, under the sheet the export draws on;
+                    // only the map is declared.
                     element_ids: z
-                      .union([z.array(z.string()).max(5000), z.record(z.string(), z.array(z.string()))])
-                      .optional(),
+                      .preprocess(
+                        (value) => (Array.isArray(value) ? { [BARE_IDS]: value } : value),
+                        z.record(z.string(), z.array(z.string()).max(5000)),
+                      )
+                      .optional()
+                      .describe("{blueprint_id: [element ids]} of the row, as the table tools returned it."),
                   }),
                 )
                 .max(5000),
             })
             .optional()
             .describe("The table to export, as render_table, count_elements or find_elements returned it."),
+          include_plan: z
+            .boolean()
+            .optional()
+            .describe("A table only. pdf: put the numbered plan before the table (off unless asked). xlsx: false leaves the plan picture out."),
+          highlight: z
+            .array(z.string().min(1).max(100))
+            .max(25)
+            .optional()
+            .describe("A plan only: what to draw, one entry per kind, e.g. [\"doors\", \"windows\"]. Categories, classes and folder names all work; plurals are fine."),
+          element_ids: z
+            .array(z.string().min(1))
+            .max(5000)
+            .optional()
+            .describe("A plan only: exact element ids to draw, as list_elements or the plan view gives them."),
+          legend: z.boolean().optional().describe("A plan only: add a legend page. Only when the user asks for one."),
         },
-        outputSchema: looseOutput(tableExportSchema),
+        outputSchema: looseOutput(exportResultSchema),
         annotations: READONLY,
         _meta: { ui: { visibility: ["model", "app"] }, "openai/widgetAccessible": true },
       },
-      async ({ project_id, format, blueprint_id, saved_table_id, table }) => {
+      async (args) => {
+        const { project_id, format, blueprint_id, blueprint_ids, saved_table_id, selection, name, language, table } = args;
         try {
-          if (!table && !saved_table_id) {
-            throw new BadArgument("Pass either `table` or `saved_table_id`.");
+          const sources = [selection, table, saved_table_id].filter(Boolean).length;
+          if (sources > 1) throw new BadArgument("Pass one of `selection`, `table` or `saved_table_id`.");
+          if (sources === 0) {
+            if (args.include_plan !== undefined || name !== undefined || language !== undefined) {
+              throw new BadArgument(
+                "`include_plan`, `name` and `language` belong to a table export; a plan export is the plan itself, named by its sheet.",
+              );
+            }
+            const sheets = [...new Set([...(blueprint_id ? [blueprint_id] : []), ...(blueprint_ids ?? [])])];
+            const sheet = sheets[0];
+            if (!sheet) {
+              throw new BadArgument("Pass one of `selection`, `table` or `saved_table_id` for a table, or `blueprint_id` for a plan.");
+            }
+            if (sheets.length > 1) throw new BadArgument("A plan export draws one sheet: give one `blueprint_id`, nothing else.");
+            if (format && format !== "pdf") {
+              throw new BadArgument(`A plan export is a pdf. For ${format}, pass the table: \`selection\`, \`table\` or \`saved_table_id\`.`);
+            }
+            const projectId = await resolveProject(principal, sheet, project_id);
+            // A model writes "doors, windows" as one entry as often as two.
+            const terms = (args.highlight ?? []).flatMap((h) => h.split(",")).map((h) => h.trim()).filter(Boolean);
+            return fileLink(
+              await api.exportPlan(principal, projectId, sheet, {
+                ...(terms.length ? { highlight: terms } : {}),
+                ...(args.element_ids?.length ? { element_ids: args.element_ids } : {}),
+                ...(args.legend ? { legend: true } : {}),
+              }),
+            );
           }
-          if ((format === "png" || format === "pdf") && !blueprint_id && !saved_table_id) {
-            throw new BadArgument("A png or pdf export needs `blueprint_id`, the sheet to draw on.");
+          if (args.highlight?.length || args.element_ids?.length || args.legend !== undefined) {
+            throw new BadArgument(
+              "`highlight`, `element_ids` and `legend` belong to a plan export; a table numbers its own rows' elements.",
+            );
           }
-          return text(
-            await api.exportTable(principal, project_id, {
+          if (!format) throw new BadArgument("A table export needs `format`: xlsx, pdf, png or csv_cf.");
+          const asked = format === "png" || (args.include_plan === true && (format === "pdf" || format === "xlsx"));
+          if (asked && !blueprint_id && !blueprint_ids && !saved_table_id) {
+            throw new BadArgument(
+              format === "png"
+                ? "A png export needs `blueprint_id`, the sheet to draw on."
+                : "An export with `include_plan` needs `blueprint_id`, the sheet to draw on.",
+            );
+          }
+          // Only a drawing is tied to its sheets: a table alone keeps every sheet's elements.
+          const drawn = format === "png" || (format === "pdf" ? args.include_plan === true : format === "xlsx" && args.include_plan !== false);
+          if (drawn && blueprint_ids && new Set(blueprint_ids).size > 1 && format !== "pdf") {
+            throw new BadArgument("Only a pdf draws several sheets; give one `blueprint_id` for a png or xlsx, or `include_plan: false`.");
+          }
+          const anySheet = blueprint_id ?? blueprint_ids?.[0];
+          const projectId = project_id ?? (anySheet ? await resolveProject(principal, anySheet) : undefined);
+          if (!projectId) throw new BadArgument("A table export needs `project_id`: the project the table's elements are in.");
+          return fileLink(
+            await api.exportTable(principal, projectId, {
               format,
+              ...(args.include_plan !== undefined ? { include_plan: args.include_plan } : {}),
               ...(blueprint_id ? { blueprint_id } : {}),
+              ...(blueprint_ids ? { blueprint_ids } : {}),
               ...(saved_table_id ? { saved_table_id } : {}),
-              ...(table ? { table } : {}),
+              ...(selection ? { selection, ...(name ? { name } : {}), ...(language ? { language } : {}) } : {}),
+              ...(table ? { table: bareIdsBack(table) } : {}),
             }),
           );
         } catch (err) {
@@ -669,10 +804,8 @@ export function buildServer(
         "quantities, and this when the user asks about particular elements, their sizes, " +
         "where they are, or what is inside one folder.\n\n" +
         "Narrow it with `cls`, `folder` and `name` (case-insensitive substring match). " +
-        "Kamai's geometry endpoint has no filter of its own, so this tool reads the " +
-        "blueprint and filters here: `matched`, `filter_scanned` and `filter_complete` say " +
-        "what the filter actually saw, and `filter_complete` false means elements exist " +
-        "that were never checked.\n\n" +
+        "Kamai applies them to every element of the blueprint, and `matched` is how many " +
+        "elements match.\n\n" +
         "`rings`, `lines` and `pts` are flat [x0,y0,x1,y1,...] integer paths in the " +
         "blueprint's own drawing space, where the page is `grid` units wide. They give " +
         "shape and position, not size: quote `area` and `len` in `units` for measurements, " +
@@ -731,12 +864,8 @@ export function buildServer(
         const projectId = await resolveProject(principal, blueprint_id, project_id);
         return text(
           await buildElementsPage(
-            (limit, cursor) => api.getGeometry(principal, projectId, blueprint_id, limit, cursor),
+            (limit, cursor, filter) => api.getGeometry(principal, projectId, blueprint_id, limit, cursor, filter),
             args,
-            // Scope for the filtered-scan cache. The token is in the key as well as the
-            // uid: the scan holds one principal's view of one blueprint, so anything that
-            // could change what this caller is allowed to see must change the key.
-            scanKey(projectId, blueprint_id),
           ),
         );
       } catch (err) {
@@ -786,7 +915,7 @@ export function buildServer(
         "Rename or recolour specific elements or folders on a blueprint. Name and colour only — " +
         "geometry cannot be changed here. " +
         (queryTools ? EDIT_IDS_SENTENCE : "Pass `ids` from list_elements or list_folders.") +
-        " Use dry_run to preview. Refer to the blueprint by name, not by id.",
+        " Use dry_run to preview. Refer to the blueprint by name, not by id." + " " + RESULT_LINK,
       inputSchema: {
         blueprint_id: z.string(),
         project_id: z.string().optional(),
@@ -815,7 +944,6 @@ export function buildServer(
           color,
           dry_run,
         });
-        if (!dry_run) invalidateScanCache(scanKey(projectId, blueprint_id));
         return text(result);
       } catch (err) {
         if (err instanceof BadArgument) throw new Error(err.message);
@@ -831,7 +959,7 @@ export function buildServer(
       description:
         "Create a folder on a blueprint, under an existing folder or under the sheet's root. " +
         "parent_id must be a folder from list_folders; omit it to create under the root. A " +
-        "missing or non-folder parent is refused, not guessed. Refer to the blueprint by name.",
+        "missing or non-folder parent is refused, not guessed. Refer to the blueprint by name." + " " + RESULT_LINK,
       inputSchema: {
         blueprint_id: z.string(),
         project_id: z.string().optional(),
@@ -855,7 +983,6 @@ export function buildServer(
           color,
           dry_run,
         });
-        if (!dry_run) invalidateScanCache(scanKey(projectId, blueprint_id));
         return text(result);
       } catch (err) {
         fail(err, "create_folder");
@@ -873,7 +1000,7 @@ export function buildServer(
         "refused. Moved non-folders inherit the destination folder's colour; a moved folder " +
         "keeps its own. " +
         (queryTools ? EDIT_IDS_SENTENCE : "Pass ids from list_elements / list_folders.") +
-        " Refer to the blueprint by name.",
+        " Refer to the blueprint by name." + " " + RESULT_LINK,
       inputSchema: {
         blueprint_id: z.string(),
         project_id: z.string().optional(),
@@ -902,7 +1029,6 @@ export function buildServer(
           index,
           dry_run,
         });
-        if (!dry_run) invalidateScanCache(scanKey(projectId, blueprint_id));
         return text(result);
       } catch (err) {
         fail(err, "move_elements");
@@ -929,7 +1055,8 @@ export function buildServer(
         "An opening's own tag is the mark printed on the sheet and the server reads heights " +
         "out of it, so it is never rewritten from here: door and window are the only values " +
         "accepted, and only on wall-surface opening pieces. " +
-        "One request per element, so pass the selection you mean. Refer to the blueprint by name.",
+        "Pass the whole selection in one call: it is written together, and an element that cannot " +
+        "take the value comes back in refused while the rest are written. Refer to the blueprint by name." + " " + RESULT_LINK,
       inputSchema: {
         blueprint_id: z.string(),
         project_id: z.string().optional(),
@@ -998,7 +1125,7 @@ export function buildServer(
         }
         if (ids.length > MAX_WRITE_IDS) {
           throw new BadArgument(
-            `This writes one element per request, so it takes at most ${MAX_WRITE_IDS} ids at a time. Split the selection and call again.`,
+            `This takes at most ${MAX_WRITE_IDS} ids at a time. Split the selection and call again.`,
           );
         }
         const projectId = await resolveProject(principal, blueprint_id, project_id);
@@ -1012,35 +1139,19 @@ export function buildServer(
               : { value: height, unit: height_unit!, quote: height_quote! },
         };
 
-        // A refusal that every element would give (no scale, a height the words do not
-        // state, a route the API does not have) stops the rest from being sent: N identical
-        // failures is N pointless round trips.
-        let sharedRefusal: string | undefined;
-        const outcomes = await mapBounded(ids, WRITE_CONCURRENCY, async (id) => {
-          if (sharedRefusal) return { id, reason: sharedRefusal };
-          try {
-            return await api.setOpeningPieceAttributes(principal, projectId, blueprint_id, id, body);
-          } catch (err) {
-            if (!(err instanceof ApiError)) throw err;
-            const reason = refusalFor(err, queryTools);
-            const perElement = err.status === 409 || (err.status === 404 && err.code !== "route_missing");
-            if (!perElement && (STOPS_FAN_OUT.has(err.code) || err.status === 400)) sharedRefusal = reason;
-            return { id, reason };
-          }
-        });
-
-        // Split on the one key only a stored row carries. The negation, rather
-        // than a second test for `reason`, so a row and a refusal can never
-        // both match and an element be counted twice.
-        const written = outcomes.filter((row): row is OpeningPieceAttributes => "feature_class" in row);
-        const refused = outcomes.filter(
-          (row): row is { id: string; reason: string } => !("feature_class" in row),
-        );
-        // Nothing written is not a partial success, it is a failed call, and
-        // it goes back as an error so the model treats it as one. The reason
-        // is the only one there is when every element gave the same answer,
-        // which is the common case: one wrong selection, or one unscaled sheet.
-        if (written.length === 0) {
+        // Kamai writes the whole selection in one call and decides what is written and what is
+        // refused (the API layer's opening-pieces route); this relays its answer.
+        let result: OpeningPiecesWritten;
+        try {
+          result = await api.setOpeningPieces(principal, projectId, blueprint_id, { ids, ...body });
+        } catch (err) {
+          const reason = err instanceof ApiError ? callRefusal(err, queryTools) : null;
+          if (reason) throw new BadArgument(`Nothing was written. ${reason}`);
+          throw err;
+        }
+        const refused = result.refused.map((row) => ({ id: row.id, reason: elementRefusal(row.code, queryTools) }));
+        // Nothing written is a failed call, not a partial success: it goes back as an error.
+        if (!result.applied) {
           const reasons = [...new Set(refused.map((row) => row.reason))];
           throw new BadArgument(
             reasons.length === 1
@@ -1048,17 +1159,10 @@ export function buildServer(
               : `Nothing was written. ${refused.map((row) => `${row.id}: ${row.reason}`).join(" ")}`,
           );
         }
-        invalidateScanCache(scanKey(projectId, blueprint_id));
-        return text({
-          applied: true,
-          changed: written.length,
-          fields: [
-            ...(height === undefined ? [] : ["height"]),
-            ...(tag === undefined ? [] : ["tag"]),
-          ],
-          written,
-          refused,
-        });
+        const links = Object.fromEntries(
+          (["project_id", "blueprint_id", "app_url", "reference_ids"] as const).flatMap((key) => (result[key] ? [[key, result[key]]] : [])),
+        );
+        return text({ applied: true, changed: result.changed, fields: result.fields, written: result.written, refused, ...links });
       } catch (err) {
         fail(err, "set_opening_height");
       }
@@ -1069,7 +1173,7 @@ export function buildServer(
     "create_project",
     {
       title: "Create a project",
-      description: "Create a new Kamai project to hold blueprints.",
+      description: "Create a new Kamai project to hold blueprints." + " " + RESULT_LINK,
       inputSchema: { name: z.string().min(1), description: z.string().optional() },
       outputSchema: looseOutput(projectSummarySchema),
       annotations: WRITE,
@@ -1087,7 +1191,7 @@ export function buildServer(
     "update_project",
     {
       title: "Rename a project",
-      description: "Change a project's name or description.",
+      description: "Change a project's name or description." + " " + RESULT_LINK,
       inputSchema: {
         project_id: z.string(),
         name: z.string().min(1).optional(),
@@ -1112,15 +1216,40 @@ export function buildServer(
       description:
         "List a project's processing jobs, newest first — one per uploaded page, with " +
         "status, progress and any error. Use it to see what is still running or why " +
-        "something failed. Refer to jobs by their filename, not by id.",
-      inputSchema: { project_id: z.string() },
+        "something failed. Refer to jobs by their filename, not by id. `latest_upload` is the project's newest " +
+        "upload: to stop the upload the user just started, pass its `upload_id` to cancel_job. " +
+        `At most \`limit\` jobs (default ${JOBS_PAGE}) come back; \`next_offset\`, when present, is the \`offset\` ` +
+        "of the next, older page; `older_not_listed` says there are older jobs past the last page offered.",
+      inputSchema: {
+        project_id: z.string(),
+        limit: z.number().int().min(1).max(100).optional(),
+        offset: z.number().int().min(0).max(JOBS_MAX_OFFSET).optional(),
+      },
       outputSchema: looseOutput(listJobsOutput),
       annotations: READONLY,
     },
-    async ({ project_id }) => {
+    async ({ project_id, limit = JOBS_PAGE, offset = 0 }) => {
       try {
-        const jobs = await api.listJobs(principal, project_id);
-        return text({ jobs, count: jobs.length });
+        const [listed, latest] = await Promise.all([
+          // One more than the page, to know whether an older page follows.
+          api.listJobs(principal, project_id, { limit: offset + limit + 1 }),
+          // An older Kamai has no such route: the jobs alone, as before.
+          api.latestUpload(principal, project_id).catch((err) => {
+            if (err instanceof ApiError && err.code === "route_missing") return null;
+            throw err;
+          }),
+        ]);
+        const rest = listed.slice(offset);
+        const jobs = rest.slice(0, limit);
+        return text({
+          ...(latest?.upload_id ? { latest_upload: latest } : {}),
+          jobs,
+          count: jobs.length,
+          // Past the last reachable offset the older jobs are named, not offered as a page that would be refused.
+          ...(rest.length > limit
+            ? offset + limit <= JOBS_MAX_OFFSET ? { next_offset: offset + limit } : { older_not_listed: true }
+            : {}),
+        });
       } catch (err) {
         fail(err, "list_jobs");
       }
@@ -1152,7 +1281,10 @@ export function buildServer(
       description:
         "Cancel a processing job that is still pending or running. A job that already " +
         "finished or failed cannot be cancelled and is reported as such. Cancelling marks " +
-        "the job; work already in progress on the Kamai side may still run to completion.",
+        "the job; work already in progress on the Kamai side may still run to completion. " +
+        "Cancelling a page job cancels every page of its upload that is still pending or running. " +
+        "`job_id` may also be an `upload_id` (from finalize_blueprint_upload or list_jobs): that cancels the " +
+        "whole upload, and works from its first seconds, so prefer it when the user wants to stop an upload." + " " + RESULT_LINK,
       inputSchema: { project_id: z.string(), job_id: z.string() },
       outputSchema: looseOutput(jobSummarySchema),
       annotations: DESTRUCTIVE_IDEMPOTENT,
@@ -1211,7 +1343,7 @@ export function buildServer(
         "Call this after PUTting the file to the signed URL. Validates the uploaded file, " +
         "files it under the project, and starts the processing pipeline. Returns the job_id, " +
         "the project_id and the project_name.\n\n" +
-        "When telling the user where the blueprint landed, use `project_name`, not the id.",
+        "When telling the user where the blueprint landed, use `project_name`, not the id." + " " + RESULT_LINK,
       inputSchema: { file_uuid: z.string() },
       outputSchema: looseOutput(uploadResultSchema),
       annotations: WRITE,
@@ -1243,11 +1375,15 @@ export function buildServer(
     async ({ project_id }) => {
       try {
         const page = await api.listProjects(principal, 100);
-        return widgetResult("upload", uploadWidgetOutput, {
-          projects: page.items.map((p) => ({ id: p.id, name: p.name })),
+        const appUrl = page.items.find((p) => p.id === project_id)?.app_url;
+        const structured = {
+          projects: page.items.map((p) => ({ id: p.id, name: p.name, ...(p.app_url ? { app_url: p.app_url } : {}) })),
           project_id: project_id ?? null,
+          ...(appUrl ? { app_url: appUrl } : {}),
           state: "idle",
-        });
+        };
+        const notice = noticeOf(page);
+        return widgetResult("upload", uploadWidgetOutput, structured, notice ? { ...structured, notice } : structured);
       } catch (err) {
         fail(err, "view_upload");
       }
@@ -1335,6 +1471,14 @@ export function buildServer(
       _meta: toolMeta("iframetest"),
     },
     async ({ mode, expand_button, url }) => {
+      // A client whose store forbids selling must not be shown the plan picker the app opens
+      // on for an account without a plan; the API layer says so, and what to say instead.
+      // Fail closed: without the answer, opening could be exactly that.
+      const me = await api.me(principal).catch(() => null);
+      if (!me) throw new Error("Kamai could not be opened just now. Try again shortly.");
+      if (me.app_links === false) {
+        throw new Error(me.notice ?? "This Kamai account's current plan does not include opening the Kamai web app.");
+      }
       const target = url ?? FRAME_ORIGINS[0]!;
       if (!isAllowedFrameTarget(target)) {
         throw new Error(
@@ -1345,15 +1489,18 @@ export function buildServer(
       return widgetResult("iframetest", kamaiAppOutput, {
         url: target,
         // One setting. pip is documented but ChatGPT web coerces it away, so offering
-        // it as a default just produces an unpredictable panel.
-        open_in: mode ?? "fullscreen",
+        // it as a default just produces an unpredictable panel. "link" asks for the
+        // Open-in-Kamai card instead of the frame: open_in is already a free string in every
+        // descriptor a host may have pinned, where a new field would fail strict validation,
+        // and an older cached bundle reads it as no mode and keeps its frame fallback.
+        open_in: openAsLink ? "link" : (mode ?? "fullscreen"),
         // Ours is a fallback. Set false once Kamai renders its own control and posts
         // requestDisplayMode up to the widget.
         expand_button: expand_button ?? true,
         chrome: false,
         declared_frame_domains: [...FRAME_ORIGINS],
         // Hosts pin descriptors: with the flag off the result must not gain a field.
-        ...(panelSignIn ? { panel_sign_in: true } : {}),
+        ...(panelSignIn && !openAsLink ? { panel_sign_in: true } : {}),
       });
     },
   );
@@ -1381,6 +1528,8 @@ export function buildServer(
       },
     );
   }
+
+  if (hostProbe) registerHostProbe(server, host.userAgent);
 
   return server;
 }

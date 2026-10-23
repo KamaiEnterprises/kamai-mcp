@@ -11,10 +11,18 @@ const DETAIL_ROUTES: ReadonlySet<RouteName> = new Set<RouteName>([
   "queryWallSurface",
   "queryTable",
   "queryResolve",
+  "getSheetText",
+  "queryPrintedTables",
   "getInventory",
   "setScale",
   "geometrySelect",
+  "getGeometry",
   "setOpeningPieceAttributes",
+  "setOpeningPieces",
+  "createMarkup",
+  "updateMarkup",
+  "deleteMarkup",
+  "clipMarkups",
 ]);
 
 export const NEEDS_SCALE_WITH_SET_SCALE =
@@ -22,6 +30,11 @@ export const NEEDS_SCALE_WITH_SET_SCALE =
 
 const FINALIZE_NOT_READY =
   "The file has not reached Kamai yet: PUT it to the signed URL first, then finalize.";
+
+// The cancel route's only 409: the job already finished, failed or was cancelled (a page job finishes
+// within a minute or two). Seen in Copilot 2026-10-13 01:39Z, where «still being processed» misled.
+const CANCEL_FINISHED =
+  "That job has already finished, so there is nothing left to cancel. get_job shows how it ended; only a job that is still pending or running can be cancelled.";
 
 const internalError = (tool: string) =>
   `Kamai hit an internal error on ${tool}. Try once more; if it fails again, tell the user Kamai could not complete it.`;
@@ -40,6 +53,7 @@ export function toolErrorText(err: unknown, tool: string, ctx: ErrorContext): st
   }
   if (err.code === "needs_scale") return ctx.queryTools ? NEEDS_SCALE_WITH_SET_SCALE : err.message;
   if (err.code === "not_ready" && tool === "finalize_blueprint_upload") return FINALIZE_NOT_READY;
+  if (err.code === "not_ready" && tool === "cancel_job") return CANCEL_FINISHED;
   if (err.code === "internal" || !(err.code in MESSAGES)) return internalError(tool);
   return err.message;
 }

@@ -219,9 +219,10 @@ async function authored(ctx: ToolContext, args: RenderArgs): Promise<Record<stri
 
   const pointed = rows.flatMap((row, i) => (row.from ? [{ i, from: row.from }] : []));
   if (pointed.length) {
+    // Kamai merges the ids a row names itself into what its pointer resolves to.
     const resolved = await api.queryResolve(ctx.principal, args.project_id, {
       selections: args.selections!,
-      rows: pointed.map((p) => p.from),
+      rows: pointed.map(({ i, from }) => (countIds(out[i]!.element_ids) ? { ...from, ids: out[i]!.element_ids } : from)),
       ids_per_row: IDS_PER_ROW,
       max_ids: IDS_PER_RESULT,
     });
@@ -229,11 +230,8 @@ async function authored(ctx: ToolContext, args: RenderArgs): Promise<Record<stri
     pointed.forEach(({ i }, j) => {
       const hit = resolved.rows[j]!;
       const row = out[i]!;
-      // An id the row names that its group also holds is one element, not two.
-      const own = row.element_ids;
-      row.element_ids = mergeIds(own, hit.element_ids);
-      const shared = countIds(own) + countIds(hit.element_ids) - countIds(row.element_ids);
-      row.element_count += hit.element_count - shared;
+      row.element_ids = hit.element_ids;
+      row.element_count = hit.element_count;
       if (hit.element_ids_truncated) row.element_ids_truncated = true;
       if (hit.problem) problems.push({ row: i, reason: hit.problem });
     });
@@ -266,6 +264,8 @@ const rowElementsInput = z.strictObject({
   row_key: rowKey.optional(),
   selections: z.array(selectionSchema).min(1).max(5).optional(),
   from: fromSchema.optional(),
+  // The row's ids as the panel holds them; Kamai merges them into what `from` resolves to.
+  ids: z.record(z.string(), z.array(z.string().min(1)).max(1500)).optional(),
 });
 
 const sameKey = (a: Record<string, string | null> | null | undefined, b: Record<string, string | null>): boolean => {
@@ -322,7 +322,7 @@ function registerTableHelpers(server: McpServer, ctx: ToolContext): void {
         }
         const resolved = await api.queryResolve(ctx.principal, args.project_id, {
           selections: args.selections!,
-          rows: [args.from!],
+          rows: [args.ids && Object.keys(args.ids).length ? { ...args.from!, ids: args.ids } : args.from!],
           ids_per_row: PANEL_IDS,
           max_ids: PANEL_IDS,
         });

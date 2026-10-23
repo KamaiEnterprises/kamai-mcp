@@ -32,18 +32,6 @@
       "align": "right"
     },
     {
-      "key": "area",
-      "label": "Area",
-      "type": "area",
-      "align": "right"
-    },
-    {
-      "key": "perimeter",
-      "label": "Perimeter",
-      "type": "length",
-      "align": "right"
-    },
-    {
       "key": "width",
       "label": "Width",
       "type": "text"
@@ -57,8 +45,6 @@
         "sub_class": "single swing door",
         "tag": "D2",
         "count": 1,
-        "area": "0.20 m²",
-        "perimeter": "2.40 m",
         "width": "90 cm wide"
       },
       "kind": "item",

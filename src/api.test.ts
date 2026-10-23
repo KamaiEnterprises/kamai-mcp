@@ -42,6 +42,30 @@ describe("entitlement refusals", () => {
     expect(err.message).toContain("open_kamai");
   });
 
+  it("puts the plan link first for a pending account, not a project link", () => {
+    const err = new ApiError("subscription_pending", 403, { plan: "pending", checkout_url: "https://app.kamai.io/get-started" });
+    expect(err.message).toContain("A plan can be chosen at https://app.kamai.io/get-started");
+    expect(err.message).toContain("a project link opens the plan screen");
+    expect(err.message).not.toMatch(/\b(Tell the user|Do not hand)\b/);
+    expect(err.message).toContain("Do not call this tool again");
+  });
+
+  it("gives an info_only client the server's remedy and no plan link, even with a checkout_url", () => {
+    const remedy = "This is not included in this Kamai account's current plan.";
+    const err = new ApiError("subscription_pending", 403, { remedy, checkout_url: "https://app.kamai.io/get-started" });
+    expect(err.message).toContain(remedy);
+    expect(err.message).not.toContain("get-started");
+    expect(err.message).not.toMatch(/choose a plan/i);
+  });
+
+  it("drops a checkout link that is not the Kamai plan page", () => {
+    for (const checkout_url of ["https://evil.example/get-started", "http://app.kamai.io/get-started", "https://app.kamai.io/projects", "javascript:alert(1)"]) {
+      const err = new ApiError("subscription_pending", 403, { checkout_url });
+      expect(err.message, checkout_url).not.toContain(checkout_url);
+      expect(err.message, checkout_url).toContain("open_kamai");
+    }
+  });
+
   it("does not put the placeholder state into the expired sentence", () => {
     // subscription_type is literally "expired" for these accounts — an access state, not
     // a plan slug, so it must not render as "the Kamai expired subscription".
@@ -258,6 +282,21 @@ describe("problem bodies", () => {
     ]);
   });
 
+  it("sends a PUT for set_rotation's route", async () => {
+    const calls: Array<{ url: string; method: string; body: unknown }> = [];
+    vi.stubGlobal("fetch", async (url: URL, init?: RequestInit) => {
+      calls.push({ url: String(url), method: init?.method ?? "GET", body: JSON.parse(String(init?.body)) });
+      return new Response(JSON.stringify({ blueprint_id: "b 1", name: "Ground", previous: 0, rotation: 270, auto_rotation: null }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    });
+    expect(await api.setRotation(principal, "p1", "b 1", 270)).toMatchObject({ rotation: 270, previous: 0 });
+    expect(calls).toEqual([
+      { url: "http://127.0.0.1:8005/v1/projects/p1/blueprints/b%201/rotation", method: "PUT", body: { rotation: 270 } },
+    ]);
+  });
+
   // A response that does not match the contract is a server fault, not something to
   // hand the model half-understood. The case that matters: a raw number where a display
   // string belongs is an SI value with no unit.
@@ -289,6 +328,65 @@ describe("problem bodies", () => {
       const path = routePath(name as keyof typeof API_ROUTES, params);
       expect(path, name).not.toContain("{");
       expect(path, name).not.toContain("x/y");
+    }
+  });
+});
+
+describe("a client whose store forbids selling", () => {
+  const principal = { token: "t", uid: "u" } as unknown as Parameters<typeof api.me>[0];
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("says the API layer's remedy instead of pointing at plans", () => {
+    const remedy = "This is not included in this Kamai account's current plan. Tell the user that plainly.";
+    for (const code of ["subscription_pending", "subscription_expired", "quota_exceeded"]) {
+      const message = new ApiError(code, 403, { remedy }).message;
+      expect(message, code).toContain(remedy);
+      expect(message, code).not.toContain("open_kamai");
+      expect(message, code).not.toMatch(/plan can be (chosen|renewed|changed)/);
+    }
+  });
+
+  it("keeps the plan remedies for every other client", () => {
+    expect(new ApiError("subscription_pending", 403, {}).message).toContain("where a plan can be chosen");
+  });
+
+  it("carries the API layer's notice onto the result", async () => {
+    vi.stubGlobal("fetch", async () =>
+      new Response(JSON.stringify({ id: "p1", name: "West Boulevard" }), {
+        status: 201,
+        headers: { "content-type": "application/json", "kamai-notice": "Not included in the current plan." },
+      }));
+    expect(await api.createProject(principal, "West Boulevard", "")).toEqual({
+      id: "p1", name: "West Boulevard", notice: "Not included in the current plan.",
+    });
+  });
+
+  it("adds nothing when there is no notice", async () => {
+    vi.stubGlobal("fetch", async () =>
+      new Response(JSON.stringify({ id: "p1", name: "West Boulevard", app_url: "https://app.kamai.io/projects/p1" }), {
+        status: 201,
+        headers: { "content-type": "application/json" },
+      }));
+    expect(await api.createProject(principal, "West Boulevard", "")).not.toHaveProperty("notice");
+  });
+});
+
+describe("the notice survives the tools that rebuild a project list", () => {
+  afterEach(() => vi.unstubAllGlobals());
+  const notice = "This Kamai account's current plan does not include opening its projects in the Kamai web app.";
+
+  it("reaches the model from list_projects, view_projects and view_upload, and never structuredContent of a widget", async () => {
+    const { connect } = await import("./testing/harness.ts");
+    vi.stubGlobal("fetch", async () =>
+      new Response(JSON.stringify({ items: [{ id: "p1", name: "West Boulevard", blueprints: [] }], next_cursor: null }), {
+        status: 200,
+        headers: { "content-type": "application/json", "kamai-notice": notice },
+      }));
+    const client = await connect({}, { userAgent: "openai-mcp/1.0.0", chatgpt: true });
+    for (const [name, args] of [["list_projects", {}], ["view_projects", {}], ["view_upload", { project_id: "p1" }]] as const) {
+      const result = (await client.callTool({ name, arguments: args })) as { content: Array<{ text?: string }>; structuredContent?: Record<string, unknown> };
+      expect(result.content.map((c) => c.text ?? "").join(" "), name).toContain(notice);
+      if (name !== "list_projects") expect(result.structuredContent, name).not.toHaveProperty("notice");
     }
   });
 });

@@ -1,0 +1,52 @@
+{
+  "status": "ok",
+  "sheets": [
+    {
+      "blueprint_id": "bpEval_a",
+      "state": "ok",
+      "lossy": true,
+      "complete": true,
+      "extractor_version": "5.3-sample",
+      "rev": 1700000000000001,
+      "chars_total": 320,
+      "note": null
+    },
+    {
+      "blueprint_id": "bpEval_b",
+      "state": "not_extracted",
+      "lossy": null,
+      "complete": null,
+      "extractor_version": null,
+      "rev": null,
+      "chars_total": null,
+      "note": "This sheet's printed tables are unknown, not empty: it was never read for tables."
+    }
+  ],
+  "tables": [
+    {
+      "id": "bpEval_a.1700000000000001.t0",
+      "blueprint_id": "bpEval_a",
+      "title": "DOOR SCHEDULE",
+      "source": "pdf-text-layer",
+      "bbox": [
+        0.3,
+        0.1,
+        0.7,
+        0.22
+      ],
+      "complete": true,
+      "coverage": {
+        "cells_present": 9,
+        "cells_total": 9
+      },
+      "degraded": false,
+      "lossy": true,
+      "n_rows": 2,
+      "n_cols": 3,
+      "chars": 320
+    }
+  ],
+  "total": 1,
+  "excluded": [],
+  "next_cursor": null
+}

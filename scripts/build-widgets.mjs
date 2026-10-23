@@ -6,7 +6,7 @@ import { build } from "vite";
 
 import { entitySafe } from "./entity-safe.mjs";
 
-const names = ["projects", "blueprint", "takeoff", "upload", "iframetest", "table"];
+const names = ["projects", "blueprint", "takeoff", "upload", "iframetest", "table", "probe"];
 const root = resolve("src/widgets/app");
 const output = resolve("dist/widgets");
 const temporary = resolve("dist/.widget-build");

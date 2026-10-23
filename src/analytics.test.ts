@@ -4,6 +4,7 @@ import type { AddressInfo } from "node:net";
 import { gunzipSync } from "node:zlib";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
+import { dropClientMeta } from "./analytics.ts";
 import { API_BASE_URL } from "./config.ts";
 
 type Captured = { event: string; distinct_id: string; properties: Record<string, unknown> };
@@ -30,6 +31,7 @@ beforeAll(async () => {
   await new Promise<void>((resolve) => ingest.listen(0, resolve));
   vi.stubEnv("POSTHOG_PROJECT_TOKEN", "phc_test");
   vi.stubEnv("POSTHOG_HOST", `http://127.0.0.1:${(ingest.address() as AddressInfo).port}`);
+  vi.stubEnv("KAMAI_HOST_PROBE", "on");
   vi.resetModules();
   const { handleMcp, mcpGuards } = await import("./index.ts");
   const app = express();
@@ -81,6 +83,18 @@ function stubProjects(): void {
 }
 
 describe("PostHog MCP analytics", () => {
+  it("records a probe report call without its report", async () => {
+    received.length = 0;
+    vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+    await rpc("tools/call", { name: "report_host_probe", arguments: { report: { run_id: "r", host: { user_agent: "FingerprintUA/1" } } } });
+    await vi.waitFor(() => expect(received.some((e) => e.event === "$mcp_tool_call")).toBe(true));
+    const call = received.find((e) => e.event === "$mcp_tool_call")!;
+    expect(call.properties.$mcp_tool_name).toBe("report_host_probe");
+    expect(call.properties.$mcp_parameters).toBeUndefined();
+    expect(JSON.stringify(received)).not.toContain("FingerprintUA");
+    vi.restoreAllMocks();
+  });
+
   it("has sent $mcp_tool_call for the person by the time the answer is readable, without the tool result", async () => {
     stubProjects();
     received.length = 0;
@@ -98,6 +112,26 @@ describe("PostHog MCP analytics", () => {
     expect(call!.properties.$mcp_response).toBeUndefined();
     expect(JSON.stringify(received)).not.toContain("Secret Tower");
     expect(received.map((e) => e.event)).not.toContain("$identify");
+    vi.unstubAllGlobals();
+  });
+
+  it("sends the tool name and arguments but none of the client's request _meta", async () => {
+    stubProjects();
+    received.length = 0;
+    const _meta = {
+      "openai/userLocation": { city: "Haifa", region: "Haifa District", country: "IL", timezone: "Asia/Jerusalem" },
+      "openai/locale": "he-IL",
+      "openai/subject": "v1/subject-0c8f2d",
+    };
+    const { snapshot } = await rpc("tools/call", { name: "list_projects", arguments: { limit: 7 }, _meta });
+
+    const call = snapshot.find((e) => e.event === "$mcp_tool_call");
+    expect(call, JSON.stringify(snapshot.map((e) => e.event))).toBeDefined();
+    expect(call!.properties.$mcp_tool_name).toBe("list_projects");
+    expect(call!.properties.$mcp_parameters).toMatchObject({ request: { method: "tools/call", params: { name: "list_projects", arguments: { limit: 7 } } } });
+    expect((call!.properties.$mcp_parameters as { request: { params: object } }).request.params).not.toHaveProperty("_meta");
+    const sent = JSON.stringify(received);
+    for (const leaked of ["openai/", "Haifa", "Asia/Jerusalem", "he-IL", "v1/subject-0c8f2d"]) expect(sent).not.toContain(leaked);
     vi.unstubAllGlobals();
   });
 
@@ -123,5 +157,29 @@ describe("PostHog MCP analytics", () => {
       const keys = Object.keys(tool.inputSchema.properties ?? {});
       for (const injected of ["context", "llm_model", "conversation_id"]) expect(keys, tool.name).not.toContain(injected);
     }
+  });
+});
+
+describe("dropClientMeta", () => {
+  it("removes _meta and keeps the rest of the request", () => {
+    const parameters = { request: { method: "tools/call", params: { name: "n", arguments: { a: 1 }, _meta: { "openai/locale": "en-US" } } } };
+    dropClientMeta(parameters);
+    expect(parameters).toEqual({ request: { method: "tools/call", params: { name: "n", arguments: { a: 1 } } } });
+  });
+
+  it.each([
+    ["undefined", undefined],
+    ["null", null],
+    ["a string", "request"],
+    ["a number", 3],
+    ["no request", {}],
+    ["a null request", { request: null }],
+    ["no params", { request: { method: "tools/list" } }],
+    ["null params", { request: { params: null } }],
+    ["string params", { request: { params: "x" } }],
+  ])("leaves %s alone", (_label, parameters) => {
+    const before = JSON.stringify(parameters);
+    expect(() => dropClientMeta(parameters)).not.toThrow();
+    expect(JSON.stringify(parameters)).toBe(before);
   });
 });

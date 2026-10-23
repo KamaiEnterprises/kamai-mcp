@@ -26,30 +26,6 @@ export const RESULT_BUDGET = 140_000;
 const ENVELOPE_RESERVE = 6_000;
 const ELEMENT_BUDGET = RESULT_BUDGET - ENVELOPE_RESERVE;
 
-// The geometry endpoint's own ceiling. It loads the whole feature collection on every
-// call and then slices, so one big page costs it strictly less than five small ones.
-export const SCAN_PAGE = 2000;
-// A filter scan is bounded so a pathological sheet cannot turn one tool call into an
-// unbounded read. Hitting it is reported, never swallowed.
-export const MAX_SCAN_PAGES = 5;
-
-// That scan is the expensive thing this tool does: the route assembles the whole feature
-// collection, measuring every feature, before it slices, so one filtered call is up to
-// five full assemblies and paging through 20 pages of matches would be a hundred of
-// them. The scan is therefore held for a minute, keyed by the caller's own scope (see
-// buildElementsPage's `scope`), which turns those 20 pages into one scan. One minute
-// because it is long enough to cover a model paging through a listing and short enough
-// that an edit in the app shows up in the next question rather than the next session;
-// the unfiltered path never reads it.
-export const SCAN_CACHE_TTL_MS = 60_000;
-const SCAN_CACHE_MAX = 2;
-
-// Filtered listings count matches; unfiltered ones count rows on the sheet. The two are
-// not interchangeable, so a filtered cursor is prefixed AND carries a fingerprint of the
-// filter that made it: an offset into "the doors" means nothing in "the windows", and
-// replaying one against another filter silently answers a question nobody asked.
-const MATCH_CURSOR = "m:";
-
 /** A caller mistake whose message is already the fix. Distinguished from anything else
  * this module can throw so server.ts can pass it through instead of flattening it into
  * the generic "something went wrong on the Kamai side". */
@@ -124,15 +100,15 @@ export const listElementsOutput = z.object({
   matched: z
     .number()
     .nullable()
-    .describe("Elements matching the filter across everything the filter read. Null when no filter was given, and a floor rather than a count when `filter_complete` is false."),
+    .describe("Elements on the blueprint matching the filter, counted by Kamai over the whole sheet. Null when no filter was given, or while the blueprint is not ready."),
   filter_scanned: z
     .number()
     .nullable()
-    .describe("Rows the filter actually examined. Null when no filter was given."),
+    .describe("Rows Kamai examined for the filter: every row on the blueprint. Null when no filter was given."),
   filter_complete: z
     .boolean()
     .nullable()
-    .describe("True only when the filter examined every row on the blueprint. False means elements exist that were never checked. Null when no filter was given."),
+    .describe("True when a filter was given: Kamai checks every row on the blueprint. Null when no filter was given."),
   geometry_included: z.boolean(),
   notes: z
     .array(z.string())
@@ -151,91 +127,9 @@ export type ListElementsArgs = {
   cursor?: string;
 };
 
-export type FetchGeometry = (limit: number, cursor?: string) => Promise<GeometryPage>;
+export type GeometryFilter = { cls?: string; folder?: string; name?: string };
 
-// The filter as it is actually applied: trimmed and lower-cased once, here, rather than
-// per row per field over ten thousand rows. `null` means "not filtering on this", which a
-// blank string is not — a whitespace-only value passes the schema's .min(1), matches every
-// row, and would otherwise buy a five-page scan to filter nothing.
-type Filters = { cls: string | null; folder: string | null; name: string | null };
-
-function needle(value: string | undefined, field: string): string | null {
-  if (value === undefined) return null;
-  const trimmed = value.trim().toLowerCase();
-  if (!trimmed) {
-    throw new BadArgument(
-      `\`${field}\` was only whitespace. Pass the text to match — "door", "Apartment 5" — or ` +
-        `leave ${field} out to list everything.`,
-    );
-  }
-  return trimmed;
-}
-
-function toFilters(args: ListElementsArgs): Filters {
-  return {
-    cls: needle(args.cls, "cls"),
-    folder: needle(args.folder, "folder"),
-    name: needle(args.name, "name"),
-  };
-}
-
-const isFiltered = (f: Filters): boolean => f.cls !== null || f.folder !== null || f.name !== null;
-
-const contains = (needle: string | null, hay: string | null | undefined): boolean =>
-  needle === null || (hay ?? "").toLowerCase().includes(needle);
-
-function matchesFilter(feature: GeometryFeature, filters: Filters): boolean {
-  return (
-    contains(filters.cls, feature.cls) &&
-    contains(filters.folder, feature.folder) &&
-    contains(filters.name, feature.name)
-  );
-}
-
-/** Fingerprint of the filter a cursor was minted under. Not a secret and not a checksum of
- * the data — just enough to tell "offset 10 into the doors" from "offset 10 into the doors
- * in Apartment 5", which are different lists that happen to share a number. FNV-1a. */
-function filterKey(filters: Filters): string {
-  const source = JSON.stringify([filters.cls, filters.folder, filters.name]);
-  let hash = 0x811c9dc5;
-  for (let i = 0; i < source.length; i += 1) {
-    hash ^= source.charCodeAt(i);
-    hash = Math.imul(hash, 0x01000193) >>> 0;
-  }
-  return hash.toString(16).padStart(8, "0");
-}
-
-const matchCursor = (filters: Filters, start: number): string =>
-  `${MATCH_CURSOR}${filterKey(filters)}:${start}`;
-
-/** The offset a filtered cursor carries, or a refusal. A cursor that came from a different
- * filter is the dangerous case: its offset is a real number in a list this call is not
- * building, so following it skips a head the caller was never shown and the result reads
- * as a complete, caveat-free answer. It is refused before the scan, not paged into. */
-function matchCursorStart(cursor: string, filters: Filters): number {
-  const body = cursor.slice(MATCH_CURSOR.length);
-  const split = body.indexOf(":");
-  const key = split === -1 ? "" : body.slice(0, split);
-  const offset = split === -1 ? "" : body.slice(split + 1);
-
-  if (key !== filterKey(filters)) {
-    throw new BadArgument(
-      "That cursor was made by a listing with different cls/folder/name filters. A filtered " +
-        "cursor is an offset into that one filter's matches, so it means nothing here. Repeat " +
-        "the filters it came from, or start this listing again without a cursor.",
-    );
-  }
-  // Deliberately strict: "0x10", " 5" and "1e3" all coerce to a number and would each page
-  // into somewhere the caller never asked for.
-  if (!/^\d+$/.test(offset)) {
-    throw new BadArgument("That cursor is not valid. Pass back a `next_cursor` exactly as it was given.");
-  }
-  const start = Number(offset);
-  if (!Number.isSafeInteger(start)) {
-    throw new BadArgument("That cursor is not valid. Pass back a `next_cursor` exactly as it was given.");
-  }
-  return start;
-}
+export type FetchGeometry = (limit: number, cursor?: string, filter?: GeometryFilter) => Promise<GeometryPage>;
 
 function toElement(feature: GeometryFeature, includeGeometry: boolean): Element {
   const row: Element = {
@@ -293,188 +187,55 @@ function resumeAfterRow(page: GeometryPage, cursor: string | undefined, lastRow:
   return resume > offset && resume <= Number(next) ? String(resume) : null;
 }
 
-type Scan = {
-  head: GeometryPage;
-  features: GeometryFeature[];
-  scanned: number;
-  complete: boolean;
-};
-
-const scanCache = new Map<string, { at: number; scan: Scan }>();
-
-/** Only for tests: the cache is process-local and keyed by caller, so nothing else needs
- * to reach into it. */
-export function clearScanCache(): void {
-  scanCache.clear();
+/** The filters as the route takes them: only those given. The route applies them to the
+ * whole sheet and refuses a blank one or a cursor from another filter with a fix message. */
+function filterQuery(args: ListElementsArgs): GeometryFilter | undefined {
+  const filter: GeometryFilter = {};
+  if (args.cls !== undefined) filter.cls = args.cls;
+  if (args.folder !== undefined) filter.folder = args.folder;
+  if (args.name !== undefined) filter.name = args.name;
+  return Object.keys(filter).length ? filter : undefined;
 }
 
-/** Drop the filtered-scan copy for one caller/blueprint after a legend write. */
-export function invalidateScanCache(scope: string): void {
-  scanCache.delete(scope);
-}
-
-function cachedScan(scope: string | undefined): Scan | undefined {
-  if (scope === undefined) return undefined;
-  const hit = scanCache.get(scope);
-  if (!hit) return undefined;
-  if (Date.now() - hit.at > SCAN_CACHE_TTL_MS) {
-    scanCache.delete(scope);
-    return undefined;
-  }
-  return hit.scan;
-}
-
-function rememberScan(scope: string | undefined, scan: Scan): void {
-  if (scope === undefined) return;
-  scanCache.set(scope, { at: Date.now(), scan });
-  for (const [key, entry] of scanCache) {
-    if (Date.now() - entry.at > SCAN_CACHE_TTL_MS) scanCache.delete(key);
-  }
-  while (scanCache.size > SCAN_CACHE_MAX) {
-    const oldest = scanCache.keys().next().value;
-    if (oldest === undefined) break;
-    scanCache.delete(oldest);
-  }
-}
-
-/** Rows this response says it read, rather than rows we asked it for. The route's cursor
- * is a plain row offset, so the cursor it hands back is exactly how far it got; a route
- * that clamped the page size would otherwise be reported as having read rows it never
- * touched. Anything that is not a forward-moving offset falls back to the estimate. */
-function rowsScanned(before: number, result: GeometryPage): number {
-  if (!result.truncated) return result.total;
-  const next = result.next_cursor;
-  if (next && /^\d+$/.test(next)) {
-    const offset = Number(next);
-    if (offset > before && offset <= result.total) return offset;
-  }
-  return Math.min(before + SCAN_PAGE, result.total);
-}
-
-/** Read the whole sheet so a client-side filter can honestly say what it saw. */
-async function scanAll(fetchPage: FetchGeometry): Promise<Scan> {
-  const features: GeometryFeature[] = [];
-  let head: GeometryPage | undefined;
-  let cursor: string | undefined;
-  let scanned = 0;
-  let complete = false;
-
-  for (let page = 0; page < MAX_SCAN_PAGES; page += 1) {
-    const result = await fetchPage(SCAN_PAGE, cursor);
-    head ??= result;
-    features.push(...result.features);
-    scanned = rowsScanned(scanned, result);
-    // Two different endings, and only one of them means the sheet was read. "There is more
-    // and here is where it is" is the loop; "there is more and no way to reach it" is an
-    // unread tail, and calling that complete would turn it into a confident total.
-    if (!result.truncated) {
-      complete = true;
-      break;
-    }
-    if (!result.next_cursor) break;
-    cursor = result.next_cursor;
-  }
-
-  return { head: head!, features, scanned, complete };
-}
-
-/**
- * @param scope Opaque per-caller key for the filtered scan cache — it must identify the
- * principal as well as the blueprint, since the scan holds one user's data. Omit it and
- * every call reads live.
- */
 export async function buildElementsPage(
   fetchPage: FetchGeometry,
   args: ListElementsArgs,
-  scope?: string,
 ): Promise<ListElementsPage> {
   const geometryIncluded = args.include_geometry ?? true;
   const requested = Math.min(args.limit ?? DEFAULT_LIMIT, MAX_LIMIT);
   const limit = geometryIncluded ? Math.min(requested, GEOMETRY_PAGE_MAX) : requested;
-  const filters = toFilters(args);
-  const filtered = isFiltered(filters);
-  const isMatchCursor = args.cursor?.startsWith(MATCH_CURSOR) ?? false;
-
-  if (filtered && args.cursor && !isMatchCursor) {
-    throw new BadArgument(
-      "That cursor came from an unfiltered listing and counts rows, not matches. Drop the " +
-        "filter, or start the filtered listing again without a cursor.",
-    );
-  }
-  if (!filtered && isMatchCursor) {
-    throw new BadArgument(
-      "That cursor came from a filtered listing. Pass the same cls, folder and name filters " +
-        "along with it, or start again without a cursor.",
-    );
-  }
+  const filter = filterQuery(args);
+  const filtered = filter !== undefined;
 
   const notes: string[] = [];
-  let head: GeometryPage;
-  let elements: Element[];
-  let matched: number | null = null;
-  let filterScanned: number | null = null;
-  let filterComplete: boolean | null = null;
-  let truncated: boolean;
-  let nextCursor: string | null;
+  let head = await fetchPage(limit, args.cursor, filter);
+  // A route without the filter answers an unfiltered page, which must never read as the
+  // matches.
+  if (filtered && head.state === "ready" && typeof head.matched !== "number") {
+    throw new Error("geometry route did not apply the cls/folder/name filter");
+  }
+  let elements = head.features.map((f) => toElement(f, geometryIncluded));
+  let truncated = head.truncated;
+  let nextCursor = head.next_cursor ?? null;
   let budgetDropped = 0;
 
-  if (filtered) {
-    // Refused before the read: a cursor from another filter is a caller mistake, and
-    // proving it costs nothing while the scan costs the route the whole sheet.
-    const start = args.cursor ? matchCursorStart(args.cursor, filters) : 0;
-
-    const cached = cachedScan(scope);
-    const scan = cached ?? (await scanAll(fetchPage));
-    if (!cached) rememberScan(scope, scan);
-
-    head = scan.head;
-    const matches = scan.features.filter((f) => matchesFilter(f, filters));
-    // An offset past the end is not an empty page: it is a cursor that no longer describes
-    // this list, and answering "0 elements, nothing more to see" would be a lie about five
-    // doors that are right there.
-    if (start > matches.length) {
-      throw new BadArgument(
-        `That cursor starts past the end of this filter's ${matches.length} match(es) — the ` +
-          "blueprint or the filter is not what it was when the cursor was made. Start the " +
-          "listing again without a cursor.",
-      );
+  const fit = fitToBudget(elements);
+  if (fit < elements.length) {
+    budgetDropped = elements.length - fit;
+    const resume = filtered ? null : resumeAfterRow(head, args.cursor, elements[fit - 1]!.i);
+    if (resume !== null) {
+      elements = elements.slice(0, fit);
+    } else {
+      // No cursor of the route's that resumes where this page now stops, and minting one
+      // by guesswork is how a caller silently loses rows. Ask for the smaller page and
+      // let the route mint its own.
+      head = await fetchPage(fit, args.cursor, filter);
+      elements = head.features.map((f) => toElement(f, geometryIncluded));
     }
-    const window = matches.slice(start, start + limit).map((f) => toElement(f, geometryIncluded));
-    const fit = fitToBudget(window);
-    budgetDropped = window.length - fit;
-
-    elements = window.slice(0, fit);
-    matched = matches.length;
-    filterScanned = scan.scanned;
-    filterComplete = scan.complete;
-    const moreMatches = start + elements.length < matches.length;
-    // Unread rows count as truncation even when every match found so far has been
-    // handed over: "no more matches in what I read" is not "no more matches".
-    truncated = moreMatches || !scan.complete;
-    nextCursor = moreMatches ? matchCursor(filters, start + elements.length) : null;
-  } else {
-    head = await fetchPage(limit, args.cursor);
-    elements = head.features.map((f) => toElement(f, geometryIncluded));
-    truncated = head.truncated;
-    nextCursor = head.next_cursor ?? null;
-
-    const fit = fitToBudget(elements);
-    if (fit < elements.length) {
-      budgetDropped = elements.length - fit;
-      const resume = resumeAfterRow(head, args.cursor, elements[fit - 1]!.i);
-      if (resume !== null) {
-        elements = elements.slice(0, fit);
-      } else {
-        // No cursor of the route's that resumes where this page now stops, and minting one
-        // by guesswork is how a caller silently loses rows. Ask for the smaller page and
-        // let the route mint its own.
-        head = await fetchPage(fit, args.cursor);
-        elements = head.features.map((f) => toElement(f, geometryIncluded));
-      }
-      truncated = true;
-      nextCursor = resume ?? head.next_cursor ?? null;
-    }
+    truncated = true;
+    nextCursor = resume ?? head.next_cursor ?? null;
   }
+  const matched = filtered ? (head.matched ?? null) : null;
 
   if (head.state === "failed") {
     notes.push("This blueprint failed to process, so Kamai holds no elements for it.");
@@ -527,15 +288,6 @@ export async function buildElementsPage(
     );
   }
 
-  if (filtered && filterComplete === false) {
-    notes.push(
-      `The cls/folder/name filter is applied by this tool, not by Kamai, and it only read the ` +
-        `first ${filterScanned} of ${head.total} rows on this blueprint. Nothing past that was ` +
-        `checked, so "matched" is a floor, not a count. Narrow the filter or use view_takeoff ` +
-        `for whole-blueprint totals.`,
-    );
-  }
-
   if (truncated) {
     notes.push(
       nextCursor
@@ -565,8 +317,8 @@ export async function buildElementsPage(
     next_cursor: nextCursor,
     filtered,
     matched,
-    filter_scanned: filterScanned,
-    filter_complete: filterComplete,
+    filter_scanned: filtered ? head.total : null,
+    filter_complete: filtered ? true : null,
     geometry_included: geometryIncluded,
     notes,
   };

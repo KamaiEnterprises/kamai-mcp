@@ -212,7 +212,7 @@ export async function handleMcp(req: Request, res: Response): Promise<void> {
   });
   const userAgent = req.get("user-agent") ?? "";
   // openai-mcp is ChatGPT's and Codex's connector; stateless, so the hint is per request.
-  const server = buildServer(req.principal!, { chatgpt: /\bopenai-mcp\//i.test(userAgent) });
+  const server = buildServer(req.principal!, { chatgpt: /\bopenai-mcp\//i.test(userAgent), userAgent });
   instrumentServer(server, req.principal!);
   // One message per request (batches are refused), so its method says whether the answer
   // carries a call worth holding for; handshakes and listings never wait on PostHog.

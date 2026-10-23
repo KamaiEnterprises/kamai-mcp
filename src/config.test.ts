@@ -37,3 +37,15 @@ describe("accepted token audience", () => {
     expect(c.RESOURCE_URL).toBe("https://mcp.example.test/mcp");
   });
 });
+
+describe("PostHog host", () => {
+  it("is Kamai's own proxy when unset", async () => {
+    vi.resetModules();
+    vi.stubEnv("POSTHOG_HOST", undefined);
+    expect((await import("./config.ts")).POSTHOG_HOST).toBe("https://t.kamai.io");
+  });
+
+  it("takes an explicit value", async () => {
+    expect((await load({ POSTHOG_HOST: "https://eu.i.posthog.com/" })).POSTHOG_HOST).toBe("https://eu.i.posthog.com");
+  });
+});

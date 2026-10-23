@@ -43,7 +43,8 @@ async function main(): Promise<void> {
     console.error(err instanceof Error ? err.message : String(err));
     process.exit(2);
   }
-  const server = buildServer(principal);
+  // No probe here: report_host_probe logs to stdout, which is this transport's channel.
+  const server = buildServer(principal, {}, { hostProbe: false });
   await server.connect(new StdioServerTransport());
   console.error(`kamai-mcp local: ${principal.email ?? principal.uid} via ${API_BASE_URL}`);
 }

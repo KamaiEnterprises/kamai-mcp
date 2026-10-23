@@ -1,12 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Download, Eye, EyeOff, Maximize2, MousePointerClick } from "lucide-react";
+import { Download, Eye, EyeOff, Maximize2, MousePointerClick, RotateCcw, ZoomIn, ZoomOut } from "lucide-react";
 
 import { callTool, hostCanCallTools, HostCannotCallTools, openLink, reportSize, requestDisplayMode, sendPrompt } from "./bridge";
 import { downloadPrompt, rgba } from "./format";
-import { ActionError, BrandHeader, Button, Card, KAMAI_APP_URL, LoadingState, OpenKamai, ProcessingState } from "./shared";
+import { ActionError, BrandHeader, Button, Card, LoadingState, OpenKamai, ProcessingState, blueprintUrl } from "./shared";
 import { TakeoffPanel } from "./TakeoffPanel";
 import type { BlueprintData, GeometryFeature, Highlight, TakeoffData } from "./types";
 import { useWidgetData } from "./useWidgetData";
+import { IDENTITY, MAX_ZOOM, clampView, panBy, quarterTurn, sideways, toGrid, turnMatrix, unturn, zoomAt, type View } from "./zoom";
 
 const DEFAULT_GRID = 2000;
 
@@ -25,8 +26,10 @@ function drawFeature(
   scale: number,
   selected: boolean,
   accent: string,
+  zoom = 1,
 ): void {
   const color = feature.color ?? { r: 120, g: 120, b: 120, a: 160 };
+  const px = 1 / zoom;
   context.save();
 
   if (feature.rings?.length) {
@@ -38,7 +41,7 @@ function drawFeature(
     const baseAlpha = color.a == null ? 0.4 : color.a / 255;
     context.fillStyle = rgba(color, baseAlpha * (selected ? 1 : 0.75));
     context.fill("evenodd");
-    context.lineWidth = selected ? 2.5 : 1;
+    context.lineWidth = (selected ? 2.5 : 1) * px;
     context.strokeStyle = selected ? accent : rgba(color, 0.95);
     context.stroke();
   }
@@ -46,7 +49,7 @@ function drawFeature(
   if (feature.lines?.length) {
     context.beginPath();
     for (const line of feature.lines) trace(context, line, scale);
-    context.lineWidth = selected ? 3.5 : 2;
+    context.lineWidth = (selected ? 3.5 : 2) * px;
     context.lineJoin = "round";
     context.lineCap = "round";
     context.strokeStyle = selected ? accent : rgba(color, 0.95);
@@ -56,13 +59,13 @@ function drawFeature(
   if (feature.pts?.length) {
     context.fillStyle = rgba(color, 0.95);
     context.strokeStyle = selected ? accent : rgba(color, 0.95);
-    context.lineWidth = selected ? 2 : 1;
+    context.lineWidth = (selected ? 2 : 1) * px;
     for (let index = 0; index < feature.pts.length; index += 2) {
       context.beginPath();
       context.arc(
         (feature.pts[index] ?? 0) * scale,
         (feature.pts[index + 1] ?? 0) * scale,
-        selected ? 5 : 3.5,
+        (selected ? 5 : 3.5) * px,
         0,
         Math.PI * 2,
       );
@@ -122,7 +125,7 @@ function nearPath(feature: GeometryFeature, x: number, y: number, tolerance: num
   return false;
 }
 
-function drawHighlight(context: CanvasRenderingContext2D, highlight: Highlight, width: number, accent: string): void {
+function drawHighlight(context: CanvasRenderingContext2D, highlight: Highlight, width: number, accent: string, zoom = 1): void {
   const scale = width / (highlight.grid || DEFAULT_GRID);
   const color = { r: 0, g: 0, b: 0, a: 255 };
   for (const outline of highlight.outlines) {
@@ -137,14 +140,14 @@ function drawHighlight(context: CanvasRenderingContext2D, highlight: Highlight, 
       context.fillStyle = accent;
       context.fill("evenodd");
       context.globalAlpha = 1;
-      context.lineWidth = 2.5;
+      context.lineWidth = 2.5 / zoom;
       context.strokeStyle = accent;
       context.stroke();
     }
     context.restore();
     // Lines and points take the selected style drawFeature already has.
     if (outline.lines?.length || outline.pts?.length) {
-      drawFeature(context, { ...outline, rings: null, color: outline.color ?? color }, scale, true, accent);
+      drawFeature(context, { ...outline, rings: null, color: outline.color ?? color }, scale, true, accent, zoom);
     }
   }
 }
@@ -241,7 +244,11 @@ function DownloadBar({
 function BlueprintCanvas({ data, highlight }: { data: BlueprintData; highlight?: Highlight }) {
   const container = useRef<HTMLDivElement>(null);
   const canvas = useRef<HTMLCanvasElement>(null);
-  const view = useRef({ width: 0, height: 0, scale: 1 });
+  const view = useRef({ width: 0, height: 0, box: 0, scale: 1, zoom: IDENTITY });
+  const [zoom, setZoom] = useState<View>(IDENTITY);
+  const drag = useRef<{ id: number; x: number; y: number; moved: boolean } | null>(null);
+  const pointers = useRef(new Map<number, { x: number; y: number }>());
+  const pinch = useRef<number | null>(null);
   const [image, setImage] = useState<HTMLImageElement | null>(null);
   const [imagePending, setImagePending] = useState(false);
   const [imageFailed, setImageFailed] = useState(false);
@@ -252,6 +259,7 @@ function BlueprintCanvas({ data, highlight }: { data: BlueprintData; highlight?:
   const [pickedClasses, setPickedClasses] = useState<Set<string>>(new Set());
   const features = data.features ?? [];
   const grid = data.grid ?? DEFAULT_GRID;
+  const turn = quarterTurn(data.rotation);
 
   const groups = useMemo(() => {
     const values = new Map<string, { count: number; color: GeometryFeature["color"] }>();
@@ -262,6 +270,9 @@ function BlueprintCanvas({ data, highlight }: { data: BlueprintData; highlight?:
     }
     return [...values.entries()];
   }, [features]);
+
+  // A different sheet, or the same one turned, starts unzoomed.
+  useEffect(() => setZoom(IDENTITY), [data.image?.url, data.blueprint_id, turn]);
 
   useEffect(() => {
     if (!data.image?.url) {
@@ -299,15 +310,25 @@ function BlueprintCanvas({ data, highlight }: { data: BlueprintData; highlight?:
     if (!context) return;
     const width = Math.max(280, container.current.clientWidth);
     const ratio = data.image?.h && data.image.w ? data.image.h / data.image.w : 0.66;
-    const height = Math.max(180, Math.round(width * ratio));
+    // The turned page keeps its own proportions; only the canvas below it has a minimum height.
+    const box = Math.round(width * (sideways(turn) ? 1 / ratio : ratio));
+    const height = Math.max(180, box);
+    // The page as stored; `rotation` turns it into the box for display only.
+    const pageWidth = sideways(turn) ? box : width;
+    const pageHeight = sideways(turn) ? width : box;
     const dpr = Math.min(window.devicePixelRatio || 1, 2);
     canvas.current.width = Math.round(width * dpr);
     canvas.current.height = Math.round(height * dpr);
     canvas.current.style.height = `${height}px`;
     context.setTransform(dpr, 0, 0, dpr, 0, 0);
     context.clearRect(0, 0, width, height);
-    if (image?.complete && image.naturalWidth) context.drawImage(image, 0, 0, width, height);
-    const scale = width / grid;
+    // The pan was clamped against the box it was made in; after a resize, clamp it again.
+    const shown = clampView(zoom, width, height);
+    context.setTransform(dpr * shown.k, 0, 0, dpr * shown.k, dpr * shown.x, dpr * shown.y);
+    context.transform(...turnMatrix(turn, width, box));
+    context.imageSmoothingQuality = "high";
+    if (image?.complete && image.naturalWidth) context.drawImage(image, 0, 0, pageWidth, pageHeight);
+    const scale = pageWidth / grid;
     const accent = getComputedStyle(document.documentElement).getPropertyValue("--color-primary").trim() || "#004fb5";
     // With a highlight, everything else is dimmed and the row's elements are drawn from
     // their own outlines, which cover elements past the page this plan loaded.
@@ -320,12 +341,12 @@ function BlueprintCanvas({ data, highlight }: { data: BlueprintData; highlight?:
         : selected?.i === feature.i;
       const dimmed = selecting && !chosen && (picked.size > 0 || pickedClasses.size > 0);
       context.globalAlpha = highlight ? 0.25 : dimmed ? 0.35 : 1;
-      drawFeature(context, feature, scale, chosen, accent);
+      drawFeature(context, feature, scale, chosen, accent, shown.k);
     }
     context.globalAlpha = 1;
-    if (highlight) drawHighlight(context, highlight, width, accent);
-    view.current = { width, height, scale };
-  }, [data.image?.h, data.image?.w, features, grid, hidden, highlight, image, selected?.i, selecting, picked, pickedClasses]);
+    if (highlight) drawHighlight(context, highlight, pageWidth, accent, shown.k);
+    view.current = { width, height, box, scale, zoom: shown };
+  }, [data.image?.h, data.image?.w, features, grid, hidden, highlight, image, selected?.i, selecting, picked, pickedClasses, turn, zoom]);
 
   useEffect(() => {
     draw();
@@ -338,11 +359,84 @@ function BlueprintCanvas({ data, highlight }: { data: BlueprintData; highlight?:
     return () => observer.disconnect();
   }, [draw]);
 
+  // Wheel and pinch zoom about the pointer; a drag pans once zoomed in. React's onWheel is
+  // passive, so preventDefault (keeping the chat from scrolling) needs a native listener.
+  useEffect(() => {
+    const element = canvas.current;
+    if (!element) return;
+    const onWheel = (event: WheelEvent) => {
+      if (!event.ctrlKey && !event.metaKey && zoom.k === 1 && event.deltaY > 0) return;
+      event.preventDefault();
+      const bounds = element.getBoundingClientRect();
+      const factor = Math.exp(-event.deltaY * (event.ctrlKey ? 0.01 : 0.002));
+      setZoom((current) =>
+        zoomAt(current, factor, event.clientX - bounds.left, event.clientY - bounds.top, view.current.width, view.current.height),
+      );
+    };
+    element.addEventListener("wheel", onWheel, { passive: false });
+    return () => element.removeEventListener("wheel", onWheel);
+  }, [zoom.k]);
+
+  const zoomBy = (factor: number) =>
+    setZoom((current) => zoomAt(current, factor, view.current.width / 2, view.current.height / 2, view.current.width, view.current.height));
+
+  const onPointerDown = (event: React.PointerEvent<HTMLCanvasElement>) => {
+    pointers.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
+    if (pointers.current.size === 2) {
+      const [a, b] = [...pointers.current.values()];
+      pinch.current = Math.hypot(a!.x - b!.x, a!.y - b!.y);
+      drag.current = null;
+      return;
+    }
+    drag.current = { id: event.pointerId, x: event.clientX, y: event.clientY, moved: false };
+  };
+
+  const onPointerMove = (event: React.PointerEvent<HTMLCanvasElement>) => {
+    if (!pointers.current.has(event.pointerId)) return;
+    pointers.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
+    const { width, height } = view.current;
+    if (pointers.current.size === 2 && pinch.current) {
+      const [a, b] = [...pointers.current.values()];
+      const distance = Math.hypot(a!.x - b!.x, a!.y - b!.y);
+      const bounds = event.currentTarget.getBoundingClientRect();
+      const cx = (a!.x + b!.x) / 2 - bounds.left;
+      const cy = (a!.y + b!.y) / 2 - bounds.top;
+      const factor = distance / pinch.current;
+      pinch.current = distance;
+      setZoom((current) => zoomAt(current, factor, cx, cy, width, height));
+      return;
+    }
+    const current = drag.current;
+    if (!current || current.id !== event.pointerId) return;
+    const dx = event.clientX - current.x;
+    const dy = event.clientY - current.y;
+    if (!current.moved && Math.hypot(dx, dy) < 4) return;
+    if (!current.moved) event.currentTarget.setPointerCapture(event.pointerId);
+    current.moved = true;
+    current.x = event.clientX;
+    current.y = event.clientY;
+    setZoom((value) => panBy(value, dx, dy, width, height));
+  };
+
+  const onPointerUp = (event: React.PointerEvent<HTMLCanvasElement>) => {
+    pointers.current.delete(event.pointerId);
+    if (pointers.current.size < 2) pinch.current = null;
+  };
+
   const onCanvasClick = (event: React.MouseEvent<HTMLCanvasElement>) => {
+    // The click that ends a pan is not a pick.
+    if (drag.current?.moved) {
+      drag.current = null;
+      return;
+    }
+    drag.current = null;
     const bounds = event.currentTarget.getBoundingClientRect();
-    const x = (event.clientX - bounds.left) / view.current.scale;
-    const y = (event.clientY - bounds.top) / view.current.scale;
-    const tolerance = 6 / view.current.scale;
+    const shown = view.current.zoom;
+    const box = toGrid(shown, event.clientX - bounds.left, event.clientY - bounds.top, 1);
+    const page = unturn(turn, box.x, box.y, view.current.width, view.current.box);
+    const x = page.x / view.current.scale;
+    const y = page.y / view.current.scale;
+    const tolerance = 6 / (view.current.scale * shown.k);
     // The smallest shape under the pointer wins: a footprint or a room drawn over a door
     // would otherwise swallow every click inside it.
     let hit: GeometryFeature | null = null;
@@ -392,8 +486,30 @@ function BlueprintCanvas({ data, highlight }: { data: BlueprintData; highlight?:
     <>
       <Card className="canvas-stage plan-grid relative">
         <div ref={container} className="relative overflow-hidden bg-base-200">
-          <canvas ref={canvas} onClick={onCanvasClick} className="cursor-crosshair" />
+          <canvas
+            ref={canvas}
+            onClick={onCanvasClick}
+            onDoubleClick={() => setZoom(IDENTITY)}
+            onPointerDown={onPointerDown}
+            onPointerMove={onPointerMove}
+            onPointerUp={onPointerUp}
+            onPointerCancel={onPointerUp}
+            className={`touch-none ${zoom.k > 1 ? "cursor-grab active:cursor-grabbing" : "cursor-crosshair"}`}
+          />
           {imagePending && <div className="skeleton absolute inset-0" />}
+          <div className="absolute end-2 top-2 flex flex-col gap-1">
+            <button type="button" aria-label="Zoom in" disabled={zoom.k >= MAX_ZOOM} onClick={() => zoomBy(1.6)} className="btn btn-xs btn-square border-base-300 bg-base-100/90">
+              <ZoomIn className="h-3.5 w-3.5" />
+            </button>
+            <button type="button" aria-label="Zoom out" disabled={zoom.k <= 1} onClick={() => zoomBy(1 / 1.6)} className="btn btn-xs btn-square border-base-300 bg-base-100/90">
+              <ZoomOut className="h-3.5 w-3.5" />
+            </button>
+            {zoom.k > 1 && (
+              <button type="button" aria-label="Reset zoom" onClick={() => setZoom(IDENTITY)} className="btn btn-xs btn-square border-base-300 bg-base-100/90">
+                <RotateCcw className="h-3.5 w-3.5" />
+              </button>
+            )}
+          </div>
         </div>
       </Card>
       {imageFailed && <p className="mt-2 text-xs text-warning">Preview image is unavailable; showing takeoff geometry.</p>}
@@ -553,6 +669,7 @@ export function BlueprintPanel({
             <Button variant="ghost" size="xs" icon={Maximize2} onClick={() => requestDisplayMode("fullscreen")}>
               Expand
             </Button>
+            <OpenKamai href={blueprintUrl(data.project_id, data.blueprint_id)} label="Open in Kamai" variant="ghost" size="xs" />
           </>
         }
       />
@@ -616,7 +733,7 @@ function BlueprintSummary({ data }: { data: BlueprintData }) {
           </ul>
         )}
         <div className="mt-4">
-          <OpenKamai href={`${KAMAI_APP_URL}/projects/${encodeURIComponent(data.project_id)}`} label="Open in Kamai" />
+          <OpenKamai href={blueprintUrl(data.project_id, data.blueprint_id)} label="Open in Kamai" />
         </div>
       </Card>
       {data.classes && data.classes.length > 0 && (

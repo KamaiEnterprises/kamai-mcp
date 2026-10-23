@@ -2,11 +2,16 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import aggregateText from "./query/__fixtures__/aggregate-text.json" with { type: "json" };
 import aggregate from "./query/__fixtures__/aggregate.json" with { type: "json" };
+import aggregateRoomScope from "./query/__fixtures__/aggregate-room-scope.json" with { type: "json" };
+import aggregateSumNote from "./query/__fixtures__/aggregate-sum-note.json" with { type: "json" };
+import aggregateWallScope from "./query/__fixtures__/aggregate-wall-scope.json" with { type: "json" };
+import aggregateWallsAsCenterlines from "./query/__fixtures__/aggregate-walls-as-centerlines.json" with { type: "json" };
 import scale from "./query/__fixtures__/scale.json" with { type: "json" };
 import select from "./query/__fixtures__/select.json" with { type: "json" };
 import wall from "./query/__fixtures__/wall-surface-area.json" with { type: "json" };
 import { RESULT_BUDGET, capIds, compact, fitResult, resultCost } from "./query/budget.ts";
 import { repairWhere } from "./query/filters.ts";
+import { countElementsOutput } from "./query/outputs.ts";
 import { connect, errorText, stubApi, structured, type ApiReply } from "./testing/harness.ts";
 
 // The query tools against the API contract. Fixtures under query/__fixtures__ are
@@ -38,7 +43,7 @@ describe("request shape", () => {
         method: "POST",
         path: `/v1/projects/${P}/query/aggregate`,
         query: {},
-        body: { category: "doors", blueprint_ids: ["bp-a"], group_by: ["folder", "sub_class", "tag"], ids_per_group: 10 },
+        body: { category: "doors", room_scope: "auto", blueprint_ids: ["bp-a"], group_by: ["folder", "sub_class", "tag"], ids_per_group: 10 },
       },
     ]);
   });
@@ -53,7 +58,7 @@ describe("request shape", () => {
       method: "POST",
       path: `/v1/projects/${P}/query/select`,
       query: {},
-      body: { category: "rooms", name_contains: "kitchen", order_by: [{ field: "area_m2", dir: "desc" }], limit: 20, offset: 40 },
+      body: { category: "rooms", name_contains: "kitchen", room_scope: "auto", order_by: [{ field: "area_m2", dir: "desc" }], limit: 20, offset: 40 },
     });
   });
 
@@ -78,6 +83,7 @@ describe("request shape", () => {
       in_folder: "Doors",
       handing: ["LH"],
       related_to: ["s3f9a2c:room-kitchen"],
+      room_scope: "auto",
     });
   });
 
@@ -117,6 +123,7 @@ describe("request shape", () => {
       path: `/v1/projects/${P}/query/wall-surface-area`,
       query: {},
       body: {
+        room_scope: "auto",
         rooms: { name_contains: "kitchen" },
         room_height: { value: 2.7, unit: "m", quote: "Ceilings are 2.7 m." },
       },
@@ -141,6 +148,7 @@ describe("request shape", () => {
     );
     expect(result.isError, errorText(result)).toBeFalsy();
     expect(calls[0]!.body).toEqual({
+      room_scope: "auto",
       blueprint_ids: ["bp-a"],
       door_height: { value: 80, unit: "in", quote: "doors are 6'8\" high" },
       window_height: { value: 110, unit: "cm", quote: "windows are 110 cm" },
@@ -152,25 +160,25 @@ describe("request shape", () => {
     // rooms" priced the kitchen).
     const routes = { [`POST /v1/projects/${P}/query/wall-surface-area`]: { body: clone(wall) } };
     let { calls } = await call("calculate_wall_surface_area", { project_id: P, sub_class: ["wet room"] }, routes);
-    expect(calls[0]!.body).toEqual({ rooms: { sub_class: ["wet room"] } });
+    expect(calls[0]!.body).toEqual({ room_scope: "auto", rooms: { sub_class: ["wet room"] } });
     ({ calls } = await call("calculate_wall_surface_area", { project_id: P, in_folder: "Rooms", blueprint_ids: ["bp-a"] }, routes));
-    expect(calls[0]!.body).toEqual({ blueprint_ids: ["bp-a"], rooms: { in_folder: "Rooms" } });
+    expect(calls[0]!.body).toEqual({ room_scope: "auto", blueprint_ids: ["bp-a"], rooms: { in_folder: "Rooms" } });
     ({ calls } = await call(
       "calculate_wall_surface_area",
       { project_id: P, name_contains: "bath", sub_class: ["wet room"], in_folder: "Rooms" },
       routes,
     ));
-    expect(calls[0]!.body).toEqual({ rooms: { name_contains: "bath", sub_class: ["wet room"], in_folder: "Rooms" } });
+    expect(calls[0]!.body).toEqual({ room_scope: "auto", rooms: { name_contains: "bath", sub_class: ["wet room"], in_folder: "Rooms" } });
   });
 
   it("passes a selection and room_refs through unchanged", async () => {
     const routes = { [`POST /v1/projects/${P}/query/wall-surface-area`]: { body: clone(wall) } };
     let { calls } = await call("calculate_wall_surface_area", { project_id: P, selection: select.selection }, routes);
-    expect(calls[0]!.body).toEqual({ selection: select.selection });
+    expect(calls[0]!.body).toEqual({ room_scope: "auto", selection: select.selection });
     ({ calls } = await call("calculate_wall_surface_area", { project_id: P, room_refs: ["s3f9a2c:room-bath"] }, routes));
-    expect(calls[0]!.body).toEqual({ room_refs: ["s3f9a2c:room-bath"] });
+    expect(calls[0]!.body).toEqual({ room_scope: "auto", room_refs: ["s3f9a2c:room-bath"] });
     ({ calls } = await call("calculate_wall_surface_area", { project_id: P, blueprint_ids: ["bp-a"] }, routes));
-    expect(calls[0]!.body).toEqual({ blueprint_ids: ["bp-a"] });
+    expect(calls[0]!.body).toEqual({ room_scope: "auto", blueprint_ids: ["bp-a"] });
   });
 
   it("set_scale PUTs the label", async () => {
@@ -262,6 +270,42 @@ describe("where repair", () => {
     });
   });
 
+  it("reads or / and as any / all, at any depth", () => {
+    const repaired = repairWhere({
+      OR: [{ field: "tag", op: "eq", value: "D1" }, { and: [{ field: "tag", op: "eq", value: "D2" }, { not: { or: [{ field: "class", op: "eq", value: "room" }] } }] }],
+    });
+    expect(repaired).toEqual({
+      any: [{ field: "tag", op: "eq", value: "D1" }, { all: [{ field: "tag", op: "eq", value: "D2" }, { not: { any: [{ field: "class", op: "eq", value: "room" }] } }] }],
+    });
+  });
+
+  it("reads field id as ref, and a leaf keyed name as field (the shapes ChatGPT sent, 2026-10-18)", () => {
+    expect(repairWhere({ field: "id", op: "in", value: ["s3f9a2c:abc"] })).toEqual({ field: "ref", op: "in", value: ["s3f9a2c:abc"] });
+    expect(repairWhere({ name: "id", op: "in", value: ["00000000-0000-4000-8000-00000000d004"] })).toEqual({
+      field: "ref",
+      op: "in",
+      value: ["00000000-0000-4000-8000-00000000d004"],
+    });
+    expect(repairWhere({ or: [{ field: "ID", op: "eq", value: "s1:a" }, { field: "tag", op: "eq", value: "D1" }] })).toEqual({
+      any: [{ field: "ref", op: "eq", value: "s1:a" }, { field: "tag", op: "eq", value: "D1" }],
+    });
+  });
+
+  it("leaves a name leaf that already has a field, and every other field, as it is", () => {
+    const leaf = { field: "name", op: "contains", value: "Kitchen" };
+    expect(repairWhere(leaf)).toEqual(leaf);
+    expect(repairWhere({ field: "ref", op: "eq", value: "s1:a" })).toEqual({ field: "ref", op: "eq", value: "s1:a" });
+    expect(repairWhere({ id: ["a"] })).toEqual({ id: ["a"] });
+  });
+
+  it("never merges two keys into one combinator: both stay for the grammar to refuse", () => {
+    const a = { field: "tag", op: "eq", value: "A" };
+    const b = { field: "tag", op: "eq", value: "B" };
+    expect(repairWhere({ any: [a], or: [b] })).toEqual({ any: [a], or: [b] });
+    expect(repairWhere({ or: [b], anyOf: [a] })).toEqual({ or: [b], anyOf: [a] });
+    expect(repairWhere({ all: [{ AND: [a], allOf: [b] }] })).toEqual({ all: [{ AND: [a], allOf: [b] }] });
+  });
+
   it("never rewrites meaning", () => {
     const leaf = { field: "Class", op: "EQ", value: "Opening" };
     expect(repairWhere(leaf)).toEqual(leaf);
@@ -270,9 +314,79 @@ describe("where repair", () => {
   it("is applied before the request: an empty where is not sent", async () => {
     const routes = { [`POST /v1/projects/${P}/query/aggregate`]: { body: clone(aggregate) } };
     let { calls } = await call("count_elements", { project_id: P, category: "walls", where: {} }, routes);
-    expect(calls[0]!.body).toEqual({ category: "walls" });
+    expect(calls[0]!.body).toEqual({ category: "walls", room_scope: "auto" });
     ({ calls } = await call("count_elements", { project_id: P, category: "walls", where: '{"anyOf":[{"field":"tag","op":"eq","value":"W1"}]}' }, routes));
-    expect(calls[0]!.body).toEqual({ category: "walls", where: { any: [{ field: "tag", op: "eq", value: "W1" }] } });
+    expect(calls[0]!.body).toEqual({ category: "walls", where: { any: [{ field: "tag", op: "eq", value: "W1" }] }, room_scope: "auto" });
+    ({ calls } = await call("count_elements", { project_id: P, where: { or: [{ name: "id", op: "in", value: ["s1:a"] }, { field: "tag", op: "eq", value: "D1" }] } }, routes));
+    expect(calls[0]!.body).toEqual({ where: { any: [{ field: "ref", op: "in", value: ["s1:a"] }, { field: "tag", op: "eq", value: "D1" }] }, room_scope: "auto" });
+  });
+});
+
+describe("a total that is not the sum of its groups", () => {
+  it("passes sum_note and not_added through as data, kept by the output schema", async () => {
+    const { result } = await call("count_elements", { project_id: P, group_by: ["folder"] }, {
+      [`POST /v1/projects/${P}/query/aggregate`]: { body: clone(aggregateSumNote) },
+    });
+    expect(result.isError, errorText(result)).toBeFalsy();
+    const out = structured<Record<string, any>>(result);
+    const groups = out.groups as Array<{ count: number }>;
+    expect(groups.reduce((n, g) => n + g.count, 0)).toBeGreaterThan(out.total.count);
+    expect(out.total.sum_note).toMatch(/^The total is not the sum of the groups, on purpose: /);
+    expect(out.total.sum_note).not.toMatch(/Quote|do not|_m2/);
+    expect(out.total.not_added).toEqual({ count: 1, length: "4.00 m", classes: ["wall_surface"] });
+    const kept = countElementsOutput.parse(out).total!;
+    expect(kept.sum_note).toBe(out.total.sum_note);
+    expect(kept.not_added).toEqual(out.total.not_added);
+  });
+});
+
+describe("room scope", () => {
+  it("asks the API layer for the rule and passes its block and note through to the model", async () => {
+    const { result, calls } = await call("count_elements", { project_id: P, category: "rooms" }, {
+      [`POST /v1/projects/${P}/query/aggregate`]: { body: clone(aggregateRoomScope) },
+    });
+    expect(result.isError, errorText(result)).toBeFalsy();
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.body).toEqual({ category: "rooms", room_scope: "auto" });
+    const out = structured<Record<string, any>>(result);
+    expect(out.room_scope).toMatchObject({ rule_version: "room-scope/3", narrowed: true, kind: "rooms", left_out: ["E"] });
+    expect(out.notes[0]).toMatch(/^Rooms are counted without the electrical sheets/);
+  });
+
+  it("passes a narrowed project-wide wall count through the same way", async () => {
+    const { result, calls } = await call("count_elements", { project_id: P, category: "walls" }, {
+      [`POST /v1/projects/${P}/query/aggregate`]: { body: clone(aggregateWallScope) },
+    });
+    expect(result.isError, errorText(result)).toBeFalsy();
+    expect(calls[0]!.body).toEqual({ category: "walls", room_scope: "auto" });
+    const out = structured<Record<string, any>>(result);
+    expect(out.room_scope).toMatchObject({ rule_version: "room-scope/3", narrowed: true, kind: "walls", left_out: ["E"] });
+    expect(out.notes[0]).toMatch(/^Walls are measured without the electrical sheets/);
+  });
+
+  it("passes the walls-as-centerlines note through when a sheet draws no wall polygons", async () => {
+    const { result } = await call("count_elements", { project_id: P, category: "walls" }, {
+      [`POST /v1/projects/${P}/query/aggregate`]: { body: clone(aggregateWallsAsCenterlines) },
+    });
+    expect(result.isError, errorText(result)).toBeFalsy();
+    const out = structured<Record<string, any>>(result);
+    expect(out.room_scope).toMatchObject({ rule_version: "room-scope/3", narrowed: false, reason: "no_such_walls" });
+    expect(out.notes).toContainEqual(expect.stringMatching(/^No wall polygons on these blueprints: their walls are drawn as centerlines\./));
+  });
+
+  it("sends the same field with explicit blueprint_ids; the API layer leaves those as asked", async () => {
+    const { calls } = await call("find_elements", { project_id: P, category: "rooms", blueprint_ids: ["bp-a", "bp-b"] }, {
+      [`POST /v1/projects/${P}/query/select`]: { body: clone(select) },
+    });
+    expect(calls[0]!.body).toEqual({ category: "rooms", room_scope: "auto", blueprint_ids: ["bp-a", "bp-b"] });
+  });
+
+  it("sends a Hebrew name as written: Kamai matches every quote spelling itself", async () => {
+    // The API layer's query compiler widens ממ"ד / ממ״ד / ממ\"ד.
+    const routes = { [`POST /v1/projects/${P}/query/select`]: { body: clone(select) } };
+    const { calls } = await call("find_elements", { project_id: P, category: "rooms", name_contains: 'ממ\\"ד' }, routes);
+    expect(calls[0]!.body).toMatchObject({ category: "rooms", name_contains: 'ממ\\"ד' });
+    expect(calls[0]!.body).not.toHaveProperty("where");
   });
 });
 
@@ -398,7 +512,10 @@ describe("result shaping", () => {
       folder: "Doors",
     });
     expect(out.rows[0]).not.toHaveProperty("class");
-    expect(out.rows[0]).toMatchObject({ id: "d1", ref: "se0951e:d1", area: "0.40 m²", width: "100 cm wide" });
+    expect(out.rows[0]).toMatchObject({ id: "d1", ref: "se0951e:d1", width: "100 cm wide" });
+    expect(out.rows[0]).not.toHaveProperty("area");
+    expect(out.rows[0]).not.toHaveProperty("perimeter");
+    expect(out.rows_common).toMatchObject({ counted_only: true });
     // A field only one row carries is left on that row.
     expect(out.rows[0]).toMatchObject({ handing: "LH" });
     expect(out.rows[1]).not.toHaveProperty("handing");

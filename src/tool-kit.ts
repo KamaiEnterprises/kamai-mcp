@@ -9,6 +9,7 @@ export const WRITE = { readOnlyHint: false, destructiveHint: false, idempotentHi
 // earlier value is lost. Repeating it lands on the same end state. OpenAI's review holds
 // any tool that overwrites user data while claiming destructiveHint: false.
 export const DESTRUCTIVE_IDEMPOTENT = { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false } as const;
+export const WRITE_IDEMPOTENT = { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false } as const;
 
 // Superseded by a view_* tool. Still callable by id, just not advertised — every
 // advertised tool costs the user another approval prompt. The snake-dialect twin
@@ -25,3 +26,24 @@ export const text = (value: unknown) => {
     : { content };
 };
 
+
+// The note carries the ready markdown link: claude.ai turns a resource_link into «Resource links
+// are not currently supported», after which the model dropped the link from its reply.
+export const handOver = (fileName: string, url: string, expiresIn?: number) =>
+  "Put this link in your reply exactly as written: " +
+  `[${fileName.replace(/[[\]]/g, "")}](${url})` +
+  (expiresIn != null ? ` (it expires in ${Math.max(1, Math.round(expiresIn / 60))} min; they can ask for a fresh one)` : "") +
+  ". It is for the user's browser: a chat's code sandbox cannot reach it, so do not download or open it yourself.";
+
+// A signed file link. The model reads the result right before it acts, so the hand-over
+// rule rides in the result too: on claude.ai the model fetched the link in its sandbox,
+// got refused and told the user the link was blocked.
+export const fileLink = (
+  value: { url: string; file_name: string; expires_in?: number | null } & Record<string, unknown>,
+) => ({
+  content: [
+    { type: "text" as const, text: JSON.stringify(value) },
+    { type: "text" as const, text: handOver(value.file_name, value.url, value.expires_in ?? undefined) },
+  ],
+  structuredContent: value as Record<string, unknown>,
+});

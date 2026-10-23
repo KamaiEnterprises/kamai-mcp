@@ -1,0 +1,77 @@
+{
+  "project_id": "projEvalTower",
+  "project_name": "Eval Tower",
+  "blueprints": [
+    {
+      "blueprint_id": "bpEval_a",
+      "name": "Ground Floor",
+      "units": "metric",
+      "has_scale": true
+    }
+  ],
+  "group_by": [
+    "folder"
+  ],
+  "groups": [
+    {
+      "folder": "Type 1",
+      "count": 1,
+      "area": "0.80 m²",
+      "perimeter": "8.40 m",
+      "element_count": 1,
+      "element_ids": {
+        "bpEval_a": [
+          "wall1"
+        ]
+      },
+      "element_ids_truncated": false
+    },
+    {
+      "folder": "Type 2",
+      "count": 2,
+      "area": "1.56 m²",
+      "perimeter": "16.40 m",
+      "element_count": 2,
+      "element_ids": {
+        "bpEval_a": [
+          "wall2",
+          "wall3"
+        ]
+      },
+      "element_ids_truncated": false
+    },
+    {
+      "folder": "Wall Surfaces",
+      "count": 1,
+      "length": "4.00 m",
+      "element_count": 1,
+      "element_ids": {
+        "bpEval_a": [
+          "wf1"
+        ]
+      },
+      "element_ids_truncated": false
+    }
+  ],
+  "groups_total": 3,
+  "groups_truncated": false,
+  "total": {
+    "count": 3,
+    "area": "2.36 m²",
+    "count_is_partial": false,
+    "area_is_partial": false,
+    "sum_note": "The total is not the sum of the groups, on purpose: 1 wall-surface pieces trace walls that are already counted, so they are listed in their own groups but not added to the total.",
+    "not_added": {
+      "count": 1,
+      "length": "4.00 m",
+      "classes": [
+        "wall_surface"
+      ]
+    }
+  },
+  "excluded": [],
+  "excluded_counts": {},
+  "total_is_partial": false,
+  "notes": [],
+  "selection": "q1.eNodjDsOgCAQRO8yNY0tvTewM4QsCEbdCOGjhfHugtVM5r3MAw_5wHB1MW1n0duSIWeYOF7EmqAELFP-x5uYIf7QuSZP1kG9AmuHPvDiUvcPSNhQz9Lc2HpMYe9vU7ibIHBBDu8Hrlgnvw"
+}

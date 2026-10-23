@@ -7,7 +7,7 @@ export function asArray<T extends { id?: string }>(value: T[] | Record<string, T
 }
 
 export function blueprintName(blueprint: BlueprintSummary): string {
-  return blueprint.name || blueprint.id;
+  return blueprint.name || "Untitled sheet";
 }
 
 export function projectBlueprints(project: ProjectDetail): BlueprintSummary[] {
@@ -16,6 +16,15 @@ export function projectBlueprints(project: ProjectDetail): BlueprintSummary[] {
 
 export function projectJobs(project: ProjectDetail): JobSummary[] {
   return asArray(project.jobs);
+}
+
+export interface UploadRef {
+  jobId: string | null;
+  uploadId: string | null;
+}
+
+export function belongsToUpload(job: JobSummary, upload: UploadRef): boolean {
+  return job.id === upload.jobId || (!!upload.uploadId && job.upload_id === upload.uploadId);
 }
 
 export function isBlueprintReady(blueprint: BlueprintSummary, jobs: JobSummary[] = []): boolean {
@@ -75,4 +84,12 @@ export function downloadPrompt(name: string, ids: string[], classes: string[]): 
   return what
     ? `Download the marked-up plan PDF of "${name}" with only these highlighted (${what}).`
     : `Download the marked-up plan PDF of "${name}" with every element highlighted.`;
+}
+
+// The outcome names the result's place in Kamai and its ids as plain data: Microsoft 365 Copilot refuses a tool
+// result that tells the model what to write.
+export function uploadReference(link: string | null, upload: UploadRef | null): string {
+  const parts = [link && `Kamai link: ${link}`, upload?.uploadId && `upload id: ${upload.uploadId}`, upload?.jobId && `job id: ${upload.jobId}`]
+    .filter(Boolean);
+  return parts.length ? ` ${parts.join("; ")}.` : "";
 }

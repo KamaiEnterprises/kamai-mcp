@@ -18,8 +18,9 @@ const page = {
     ...Array.from({ length: 300 }, (_, i) => ({ i, id: `r${i}`, cls: "room", name: `Room ${i}`, color: { r: 1, g: 2, b: 3, a: 1 }, rings: [ring], area: 12.5 })),
     ...Array.from({ length: 100 }, (_, i) => ({ i: 300 + i, id: `d${i}`, cls: "door", name: `Door ${i}`, color: { r: 1, g: 2, b: 3, a: 1 }, pts: [1, 2] })),
   ],
-  total: 400,
-  truncated: false,
+  total: 1300,
+  truncated: true,
+  classes: [{ cls: "room", count: 900 }, { cls: "door", count: 400 }],
   next_cursor: null,
   scale_label: "1:50",
   needs_scale: false,
@@ -29,8 +30,13 @@ const page = {
 
 afterEach(() => vi.unstubAllGlobals());
 
-async function viewBlueprint() {
-  vi.stubGlobal("fetch", async () => new Response(JSON.stringify(page), { status: 200, headers: { "content-type": "application/json" } }));
+const seen: string[] = [];
+
+async function viewBlueprint(body: object = page) {
+  vi.stubGlobal("fetch", async (url: URL) => {
+    seen.push(String(url));
+    return new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
+  });
   const server = buildServer({ uid: "test", token: "test" });
   const [a, b] = InMemoryTransport.createLinkedPair();
   await server.connect(a);
@@ -50,13 +56,24 @@ describe("view_blueprint model text", () => {
     expect(JSON.parse(text)).toMatchObject({
       name: "Haus F",
       project_name: "Default Project",
-      total: 400,
+      total: 1300,
       features_shown: 400,
-      classes: [{ cls: "room", count: 300 }, { cls: "door", count: 100 }],
+      classes: [{ cls: "room", count: 900 }, { cls: "door", count: 400 }],
     });
     const structured = result.structuredContent as { image: { url: string }; features: unknown[] };
     expect(structured.image.url).toBe(SIGNED);
     expect(structured.features).toHaveLength(400);
+  });
+
+  it("asks Kamai for the whole sheet's class counts and relays them as they are", async () => {
+    await viewBlueprint();
+    expect(new URL(seen.at(-1)!).searchParams.get("include")).toBe("classes");
+  });
+
+  it("fails rather than describe a ready sheet without its class counts", async () => {
+    const { classes: _classes, ...old } = page;
+    const result = await viewBlueprint(old);
+    expect(result.isError).toBe(true);
   });
 });
 

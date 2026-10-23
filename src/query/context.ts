@@ -5,7 +5,7 @@ import type { Principal } from "../auth.ts";
 export interface ToolContext {
   principal: Principal;
   queryTools: boolean;
+  printedTables: boolean;
+  rotation: boolean;
   fail: (err: unknown, tool: string) => never;
-  /** Key of the per-caller list_elements scan cache, dropped after a write. */
-  scanKey: (projectId: string, blueprintId: string) => string;
 }

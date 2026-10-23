@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { asArray, isBlueprintReady, rgba, scaleWarning } from "./format";
+import { asArray, belongsToUpload, isBlueprintReady, rgba, scaleWarning } from "./format";
 
 describe("widget view models", () => {
   it("normalizes keyed and array payloads", () => {
@@ -12,6 +12,16 @@ describe("widget view models", () => {
     const blueprint = { id: "b", ready: { geojson: true, all_tiles: true } };
     expect(isBlueprintReady(blueprint, [{ id: "j", blueprint_id: "b", status: "RUNNING" }])).toBe(false);
     expect(isBlueprintReady(blueprint, [{ id: "j", blueprint_id: "b", status: "SUCCEEDED" }])).toBe(true);
+  });
+
+  it("picks an upload's page jobs by the upload they name, not by their file name", () => {
+    const upload = { jobId: "j1", uploadId: "u1" };
+    const job = (id: string, upload_id: string | null, filename: string) =>
+      ({ id, blueprint_id: "b", status: "RUNNING", filename, upload_id });
+    expect(belongsToUpload(job("j1", null, "plan.pdf"), upload)).toBe(true);
+    expect(belongsToUpload(job("j2", "u1", "(2) plan.pdf"), upload)).toBe(true);
+    expect(belongsToUpload(job("j3", "u0", "(2) plan.pdf"), upload)).toBe(false);
+    expect(belongsToUpload(job("j4", null, "(2) plan.pdf"), { jobId: "j1", uploadId: null })).toBe(false);
   });
 
   it("bounds rgba values before they reach canvas styles", () => {

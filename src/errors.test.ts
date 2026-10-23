@@ -46,6 +46,19 @@ describe("toolErrorText", () => {
     );
   });
 
+  it("tells cancel_job that its 409 means the job already finished", () => {
+    expect(toolErrorText(new ApiError("not_ready", 409), "cancel_job", on)).toMatch(/already finished, so there is nothing left to cancel/);
+    expect(toolErrorText(new ApiError("not_ready", 409), "cancel_job", on)).not.toMatch(/still being processed/);
+  });
+
+  it("cancel_job answers a finished job with that sentence end to end", async () => {
+    const { connect, stubApi } = await import("./testing/harness.ts");
+    stubApi({ "POST /v1/projects/p1/jobs/j1/cancel": { status: 409, body: { type: "x", title: "Not ready", status: 409, code: "not_ready", detail: "Job is already SUCCEEDED" } } });
+    const result = await (await connect()).callTool({ name: "cancel_job", arguments: { project_id: "p1", job_id: "j1" } });
+    expect(result.isError).toBe(true);
+    expect(JSON.stringify(result.content)).toContain("already finished");
+  });
+
   it("tells the model a missing route is final for the conversation", () => {
     expect(toolErrorText(new ApiError("route_missing", 404), "set_scale", on)).toMatch(
       /not available on the server yet\. Do not call it again in this conversation/,

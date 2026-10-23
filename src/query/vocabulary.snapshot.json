@@ -432,22 +432,22 @@
     {
       "name": "area_m2",
       "kind": "measure",
-      "doc": "polygons only; null for lines"
+      "doc": "polygons only; null for lines. A filter also tests the stored box of objects, finds and words, whose rows show none"
     },
     {
       "name": "length_m",
       "kind": "measure",
-      "doc": "lines only; null for polygons"
+      "doc": "lines only; null for polygons. A filter also tests the stored box of objects, finds and words, whose rows show none"
     },
     {
       "name": "perimeter_m",
       "kind": "measure",
-      "doc": "polygons only"
+      "doc": "polygons only. A filter also tests the stored box of objects, finds and words, whose rows show none"
     },
     {
       "name": "width_m",
       "kind": "measure",
-      "doc": "clear width; openings only"
+      "doc": "doors/windows: clear width; walls: drawn thickness (face to face); null when not measured"
     }
   ],
   "operators": [

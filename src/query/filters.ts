@@ -13,7 +13,7 @@ import {
   TAG_GUIDE,
   WHERE_GUIDE,
 } from "./descriptions.ts";
-import { CATEGORIES, CLASSES, HANDINGS, SUB_CLASSES } from "./vocabulary.ts";
+import { vocabulary } from "./vocabulary.ts";
 
 // A ref is `s<sheet hash>:<local id>`, the handle every query row carries.
 export const REF_RE = /^s[0-9a-f]{4,16}:.{1,200}$/;
@@ -27,31 +27,42 @@ export const scopeShape = {
   blueprint_ids: z.array(z.string().min(1)).min(1).max(25).optional().describe(BLUEPRINT_IDS_GUIDE),
 };
 
-export const filterShape = {
-  category: z.enum(CATEGORIES).optional().describe(CATEGORY_GUIDE),
-  class: z.array(z.enum(CLASSES)).min(1).max(8).optional().describe(CLASS_GUIDE),
-  sub_class: z.array(z.enum(SUB_CLASSES)).min(1).max(15).optional().describe(SUB_CLASS_GUIDE),
+// The API layer decides which sheets a project-wide room or wall query reads;
+// kamai-mcp only asks for it. "auto" is always sent: explicit blueprint_ids, a discipline filter
+// or a non-room query come back unchanged with a reason.
+export const ROOM_SCOPE = "auto";
+
+/** The filter fields of a query tool, their enums taken from Kamai's vocabulary as it is now. */
+export const filterShape = (v = vocabulary()) => ({
+  category: z.enum(v.categories).optional().describe(CATEGORY_GUIDE),
+  class: z.array(z.enum(v.classes)).min(1).max(8).optional().describe(CLASS_GUIDE),
+  sub_class: z.array(z.enum(v.sub_classes)).min(1).max(15).optional().describe(SUB_CLASS_GUIDE),
   name_contains: z.string().min(1).max(200).optional().describe(NAME_CONTAINS_GUIDE),
   tag: z.array(z.string().min(1).max(100)).min(1).max(100).optional().describe(TAG_GUIDE),
   in_folder: z.string().min(1).max(200).optional().describe(IN_FOLDER_GUIDE),
-  handing: z.array(z.enum(HANDINGS)).min(1).max(4).optional().describe(HANDING_GUIDE),
+  handing: z.array(z.enum(v.handing)).min(1).max(4).optional().describe(HANDING_GUIDE),
   related_to: z.array(z.string().regex(REF_RE)).min(1).max(50).optional().describe(RELATED_TO_GUIDE),
   where: z.union([z.record(z.string(), z.unknown()), z.string().max(8192)]).optional().describe(WHERE_GUIDE),
-};
+});
 
-const FILTER_KEYS = Object.keys(filterShape) as Array<keyof typeof filterShape>;
+const FILTER_KEYS = Object.keys(filterShape()) as Array<keyof ReturnType<typeof filterShape>>;
 
-const COMBINATOR: Record<string, string> = { any: "any", anyof: "any", all: "all", allof: "all" };
+const COMBINATOR: Record<string, string> = { any: "any", anyof: "any", or: "any", all: "all", allof: "all", and: "all" };
+const FIELD_ALIAS: Record<string, string> = { id: "ref" };
 
 /** Coerce the `where` shapes models actually send into the one the API takes, instead
  * of refusing them: each refusal costs a whole model round trip over the full context.
  *
- * Applied at every nested node. A JSON string is parsed (a double-encoded filter); `{}`,
- * `[]` and `""` mean no filter (undefined); `anyOf` / `ALL` and the like become `any` /
- * `all`, at any depth: inside `any`, `all`, `not`, `related.match`, `related.via` and
- * `spatial.of`. Anything else passes through untouched for the API's grammar to judge:
- * this fixes shapes, never meaning. A string that is not JSON is passed through as it is,
- * so the grammar can say what is wrong with it. */
+ * Applied at every nested node. A JSON string is parsed (a double-encoded filter); `{}`, `[]` and
+ * `""` mean no filter (undefined); `anyOf` / `or` / `ALL` / `and` and the like become
+ * `any` / `all`, at any depth: inside `any`, `all`, `not`, `related.match`, `related.via`
+ * and `spatial.of`. A leaf keyed `name` instead of `field` gets `field`, and field `id`
+ * (which the grammar has no other meaning for) becomes `ref`; a bare element id is then
+ * refused by the grammar with what a ref looks like. Anything else passes through
+ * untouched for the API's grammar to judge: this fixes shapes, never meaning. Two keys
+ * that would land on one combinator ({any, or}) keep their own names, so the grammar
+ * refuses the node instead of one branch silently replacing the other. A string
+ * that is not JSON is passed through as it is, so the grammar can say what is wrong with it. */
 export function repairWhere(where: unknown): unknown {
   if (typeof where === "string") {
     const trimmed = where.trim();
@@ -70,10 +81,17 @@ export function repairWhere(where: unknown): unknown {
 function repairNode(node: unknown): unknown {
   if (!isRecord(node)) return node;
   const out: Record<string, unknown> = {};
+  const canonOf = (key: string) => COMBINATOR[key.toLowerCase()] ?? key;
+  const keys = Object.keys(node);
   for (const [key, value] of Object.entries(node)) {
-    const canon = COMBINATOR[key.toLowerCase()] ?? key;
-    out[canon] = value;
+    const canon = canonOf(key);
+    out[keys.filter((k) => canonOf(k) === canon).length > 1 ? key : canon] = value;
   }
+  if ("op" in out && !("field" in out) && typeof out.name === "string") {
+    out.field = out.name;
+    delete out.name;
+  }
+  if (typeof out.field === "string") out.field = FIELD_ALIAS[out.field.toLowerCase()] ?? out.field;
   for (const combo of ["any", "all"]) {
     const parts = out[combo];
     if (Array.isArray(parts)) out[combo] = parts.map(repairNode);

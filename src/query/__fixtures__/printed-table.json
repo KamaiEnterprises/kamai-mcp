@@ -1,0 +1,43 @@
+{
+  "status": "ok",
+  "table": {
+    "id": "bpEval_a.1700000000000001.t0",
+    "blueprint_id": "bpEval_a",
+    "title": "DOOR SCHEDULE",
+    "source": "pdf-text-layer",
+    "bbox": [
+      0.3,
+      0.1,
+      0.7,
+      0.22
+    ],
+    "complete": true,
+    "coverage": {
+      "cells_present": 9,
+      "cells_total": 9
+    },
+    "degraded": false,
+    "lossy": true,
+    "n_rows": 2,
+    "n_cols": 3,
+    "chars": 320,
+    "header": [
+      "MARK",
+      "WIDTH",
+      "HEIGHT"
+    ],
+    "rows": [
+      [
+        "D1",
+        "1000",
+        "2100"
+      ]
+    ],
+    "markdown": null,
+    "header_boxes": null,
+    "cell_boxes": null
+  },
+  "total_rows": 2,
+  "next_cursor": "AXsiciI6InByaW50ZWQtdGFibGVzIiwiZiI6ImY3YjdiYzU3MGQ3M2NjOTkiLCJvIjoxfQ",
+  "note": "Read back from the markdown: line breaks inside cells are flattened, short rows are padded, and there are no cell boxes."
+}

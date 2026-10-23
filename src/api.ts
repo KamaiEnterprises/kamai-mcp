@@ -6,9 +6,12 @@ import {
   aggregateResultSchema,
   geometrySelectResultSchema,
   inventoryResultSchema,
+  printedTablesResultSchema,
   resolveResultSchema,
+  rotationResultSchema,
   scaleResultSchema,
   selectResultSchema,
+  sheetTextResultSchema,
   tableResultSchema,
   vocabularySchema,
   wallSurfaceResultSchema,
@@ -16,9 +19,12 @@ import {
   type GeometrySelectResult,
   type HeightStatement,
   type InventoryResult,
+  type PrintedTablesResult,
   type ResolveResult,
+  type RotationResult,
   type ScaleResult,
   type SelectResult,
+  type SheetTextResult,
   type TableResult,
   type Vocabulary,
   type WallSurfaceResult,
@@ -36,6 +42,14 @@ import {
 const blueprintState = z.enum(["ready", "processing", "failed"]);
 const units = z.object({ area: z.string(), length: z.string() });
 
+// Clockwise degrees, 0/90/180/270; absent on an older API layer. `rotation` is how the
+// user wants the sheet shown (display only: geometry and the image stay as stored);
+// `auto_rotation` is how far Kamai turned the page upright at upload, already in the image.
+const sheetTurn = {
+  rotation: z.number().nullish(),
+  auto_rotation: z.number().nullish(),
+};
+
 export const rgbaSchema = z.object({
   r: z.number(),
   g: z.number(),
@@ -43,10 +57,23 @@ export const rgbaSchema = z.object({
   a: z.number(),
 });
 
+// Every key null (levels empty) on a sheet nobody classified: "not classified", never a guess.
+export const sheetIdentitySchema = z.object({
+  sheet_number: z.string().nullish(),
+  title: z.string().nullish(),
+  discipline: z.string().nullish(),
+  sheet_type: z.number().nullish(),
+  sheet_type_label: z.string().nullish(),
+  levels: z.array(z.string()).nullish(),
+});
+
 export const blueprintSummarySchema = z.object({
   id: z.string(),
   name: z.string().nullish(),
   ready: z.boolean(),
+  // Only on sheets of a pick-pages upload: light = viewable but not analysed until the user picks it.
+  analysis: z.enum(["light", "queued", "running", "full", "failed"]).nullish(),
+  identity: sheetIdentitySchema.nullish(),
 });
 
 export const projectSummarySchema = z.object({
@@ -56,12 +83,26 @@ export const projectSummarySchema = z.object({
   last_modified: z.number().nullish(),
   // Only populated when the request asks for include=blueprints.
   blueprints: z.array(blueprintSummarySchema).nullish(),
+  // The page of this result in the Kamai web app (the API layer builds it).
+  app_url: z.string().nullish(),
+  reference_ids: z.record(z.string(), z.string()).nullish(),
 });
 
 export const projectPageSchema = z.object({
   items: z.array(projectSummarySchema),
   next_cursor: z.string().nullish(),
 });
+
+// The project's newest upload (the API layer builds it): its upload_id cancels every page of it.
+export const latestUploadSchema = z.object({
+  upload_id: z.string().nullish(),
+  filename: z.string().nullish(),
+  created_at: z.string().nullish(),
+  status: z.string().nullish(),
+  pages: z.number(),
+  open_pages: z.number(),
+});
+export type LatestUpload = z.infer<typeof latestUploadSchema>;
 
 export const jobSummarySchema = z.object({
   id: z.string(),
@@ -72,6 +113,17 @@ export const jobSummarySchema = z.object({
   progress: z.number(),
   error_message: z.string().nullish(),
   error_code: z.string().nullish(),
+  // The upload this page job belongs to (finalize_blueprint_upload's upload_id); null before the job tree.
+  upload_id: z.string().nullish(),
+  // When the job was created: tells two uploads of the same file apart.
+  created_at: z.string().nullish(),
+  // 0-based page of the uploaded file, and how far Kamai turned it upright.
+  page_index: z.number().nullish(),
+  auto_rotation: z.number().nullish(),
+  project_id: z.string().nullish(),
+  // The page of this result in the Kamai web app (the API layer builds it).
+  app_url: z.string().nullish(),
+  reference_ids: z.record(z.string(), z.string()).nullish(),
 });
 
 export const projectDetailSchema = z.object({
@@ -123,6 +175,11 @@ export const geometryPageSchema = z.object({
   needs_scale: z.boolean(),
   scale_unconfirmed: z.boolean(),
   units,
+  // Features matching the cls / folder / name filter over the whole sheet; null without a filter.
+  matched: z.number().nullish(),
+  // With include=classes: drawable features per class over the whole sheet, first-seen order.
+  classes: z.array(z.object({ cls: z.string(), count: z.number() })).nullish(),
+  ...sheetTurn,
 });
 
 export const uploadTicketSchema = z.object({
@@ -137,11 +194,15 @@ export const uploadTicketSchema = z.object({
 
 export const uploadResultSchema = z.object({
   job_id: z.string().nullish(),
+  upload_id: z.string().nullish(),
   blueprint_id: z.string().nullish(),
   project_id: z.string(),
   project_name: z.string().nullish(),
   filename: z.string().nullish(),
   status: z.string().nullish(),
+  // The page of this result in the Kamai web app (the API layer builds it).
+  app_url: z.string().nullish(),
+  reference_ids: z.record(z.string(), z.string()).nullish(),
 });
 
 export const blueprintLocationSchema = z.object({
@@ -185,6 +246,8 @@ export const blueprintDetailSchema = z.object({
   failed: z.boolean(),
   error_message: z.string().nullish(),
   error_code: z.string().nullish(),
+  identity: sheetIdentitySchema.nullish(),
+  ...sheetTurn,
 });
 
 export const legendFolderSchema = z.object({
@@ -209,6 +272,11 @@ export const featurePatchResultSchema = z.object({
   changed: z.number(),
   ids: z.array(z.string()),
   fields: z.array(z.string()),
+  project_id: z.string().nullish(),
+  blueprint_id: z.string().nullish(),
+  // The page of this result in the Kamai web app (the API layer builds it).
+  app_url: z.string().nullish(),
+  reference_ids: z.record(z.string(), z.string()).nullish(),
 });
 
 /** What one opening piece reports back after a tag/height write.
@@ -226,11 +294,30 @@ export const openingPieceAttributesSchema = z.object({
   feature_class: z.string(),
 });
 
+export const openingPiecesWrittenSchema = z.object({
+  applied: z.boolean(),
+  changed: z.number(),
+  fields: z.array(z.string()),
+  written: z.array(openingPieceAttributesSchema),
+  refused: z.array(z.object({ id: z.string(), code: z.string(), detail: z.string() })),
+  project_id: z.string().nullish(),
+  blueprint_id: z.string().nullish(),
+  // The page of this result in the Kamai web app (the API layer builds it).
+  app_url: z.string().nullish(),
+  reference_ids: z.record(z.string(), z.string()).nullish(),
+});
+
 export const folderCreatedSchema = z.object({
   applied: z.boolean(),
   id: z.string().nullish(),
   name: z.string(),
+  folder_id: z.string().nullish(),
   parent_id: z.string().nullish(),
+  project_id: z.string().nullish(),
+  blueprint_id: z.string().nullish(),
+  // The page of this result in the Kamai web app (the API layer builds it).
+  app_url: z.string().nullish(),
+  reference_ids: z.record(z.string(), z.string()).nullish(),
 });
 
 export const featureMovedSchema = z.object({
@@ -240,6 +327,11 @@ export const featureMovedSchema = z.object({
   ids: z.array(z.string()),
   unknown: z.array(z.string()),
   refused: z.array(z.object({ id: z.string(), reason: z.string() })),
+  project_id: z.string().nullish(),
+  blueprint_id: z.string().nullish(),
+  // The page of this result in the Kamai web app (the API layer builds it).
+  app_url: z.string().nullish(),
+  reference_ids: z.record(z.string(), z.string()).nullish(),
 });
 
 export const planExportSchema = z.object({
@@ -256,6 +348,10 @@ export const planExportSchema = z.object({
   legend: z.array(z.object({ label: z.string(), count: z.number(), color: rgbaSchema })),
   unmatched_highlight: z.array(z.string()),
   missing_ids: z.array(z.string()),
+  markups: z.number().optional(),
+  // The page of this result in the Kamai web app (the API layer builds it).
+  app_url: z.string().nullish(),
+  reference_ids: z.record(z.string(), z.string()).nullish(),
 });
 
 export type Rgba = z.infer<typeof rgbaSchema>;
@@ -278,7 +374,52 @@ export type FeaturePatchResult = z.infer<typeof featurePatchResultSchema>;
 export type FolderCreated = z.infer<typeof folderCreatedSchema>;
 export type FeatureMoved = z.infer<typeof featureMovedSchema>;
 export type OpeningPieceAttributes = z.infer<typeof openingPieceAttributesSchema>;
+export type OpeningPiecesWritten = z.infer<typeof openingPiecesWrittenSchema>;
 export type PlanExport = z.infer<typeof planExportSchema>;
+
+const pagePoint = z.array(z.number()).length(2);
+
+export const markupSchema = z.looseObject({
+  id: z.string(),
+  kind: z.enum(["cloud", "highlight", "note"]),
+  blueprint_id: z.string(),
+  box: z.array(z.number()).nullish(),
+  points: z.array(pagePoint).optional(),
+  pointer: pagePoint.optional(),
+  text: z.string().nullish(),
+  delta: z.number().optional(),
+  room: z.string().nullish(),
+  element: z.string().nullish(),
+  version: z.number(),
+  can_edit: z.boolean(),
+  deleted: z.boolean().optional(),
+});
+
+export const markupListSchema = z.looseObject({
+  blueprint_id: z.string(),
+  name: z.string().nullish(),
+  markups: z.array(markupSchema),
+});
+
+export const markupChangeSchema = z.looseObject({
+  status: z.enum(["created", "unchanged", "updated", "deleted", "conflict"]),
+  markup: markupSchema,
+});
+
+export const markupClipSchema = z.looseObject({
+  blueprint_id: z.string(),
+  name: z.string().nullish(),
+  url: z.string(),
+  file_name: z.string(),
+  bytes: z.number(),
+  expires_in: z.number(),
+  page: z.string(),
+  markups: z.number(),
+});
+
+export type MarkupList = z.infer<typeof markupListSchema>;
+export type MarkupChange = z.infer<typeof markupChangeSchema>;
+export type MarkupClip = z.infer<typeof markupClipSchema>;
 
 export const tableExportSchema = z.object({
   format: z.string(),
@@ -287,14 +428,33 @@ export const tableExportSchema = z.object({
   bytes: z.number(),
   expires_in: z.number(),
   badges: z.number().nullish(),
+  project_id: z.string().nullish(),
+  blueprint_id: z.string().nullish(),
+  // The page of this result in the Kamai web app (the API layer builds it).
+  app_url: z.string().nullish(),
+  reference_ids: z.record(z.string(), z.string()).nullish(),
+});
+
+/** What `export` returns: a table export, or a plan export with its legend and what matched nothing. */
+export const exportResultSchema = tableExportSchema.extend({
+  name: z.string().nullish(),
+  project_name: z.string().nullish(),
+  elements: z.number().optional(),
+  legend: planExportSchema.shape.legend.optional(),
+  unmatched_highlight: z.array(z.string()).optional(),
+  missing_ids: z.array(z.string()).optional(),
 });
 
 export type TableExport = z.infer<typeof tableExportSchema>;
 
 export interface TableExportBody {
   format: "xlsx" | "pdf" | "png" | "csv_cf";
+  include_plan?: boolean;
   blueprint_id?: string;
   saved_table_id?: string;
+  selection?: string;
+  name?: string;
+  language?: string;
   table?: {
     name?: string;
     title?: string | null;
@@ -313,6 +473,7 @@ const looseBlueprintSummarySchema = z
     id: z.string(),
     name: z.string().nullish().catch(null),
     ready: z.boolean().catch(false),
+    analysis: z.enum(["light", "queued", "running", "full", "failed"]).nullish().catch(null),
   })
   .passthrough();
 
@@ -348,9 +509,12 @@ function parseBlueprintSummaries(value: unknown): BlueprintSummary[] | null {
   return recordCandidates(value).flatMap((candidate) => {
     const parsed = looseBlueprintSummarySchema.safeParse(candidate);
     if (!parsed.success) return [];
-    return [{ id: parsed.data.id, name: parsed.data.name, ready: parsed.data.ready }];
+    return [{ id: parsed.data.id, name: parsed.data.name, ready: parsed.data.ready, analysis: parsed.data.analysis }];
   });
 }
+
+const isStringMap = (value: unknown): value is Record<string, string> =>
+  !!value && typeof value === "object" && !Array.isArray(value) && Object.values(value).every((v) => typeof v === "string");
 
 export function parseProjectPage(value: unknown): ProjectPage {
   const page = looseProjectPageSchema.parse(value);
@@ -363,6 +527,8 @@ export function parseProjectPage(value: unknown): ProjectPage {
         name: parsed.data.name ?? "Untitled project",
         description: parsed.data.description ?? "",
         last_modified: parsed.data.last_modified,
+        app_url: typeof parsed.data.app_url === "string" ? parsed.data.app_url : undefined,
+        reference_ids: isStringMap(parsed.data.reference_ids) ? parsed.data.reference_ids : undefined,
         blueprints: parseBlueprintSummaries(parsed.data.blueprints),
       },
     ];
@@ -374,7 +540,7 @@ export function parseProjectPage(value: unknown): ProjectPage {
 // here, and scripts/check-routes.ts asserts every entry against a live API's
 // /openapi.json: a fetch-mocked tool test passes against a route that does not exist.
 // Placeholders use the API layer's own parameter names.
-export type HttpMethod = "GET" | "POST" | "PATCH" | "PUT";
+export type HttpMethod = "GET" | "POST" | "PATCH" | "PUT" | "DELETE";
 
 export const API_ROUTES = {
   me: { method: "GET", template: "/v1/me" },
@@ -383,6 +549,7 @@ export const API_ROUTES = {
   getProject: { method: "GET", template: "/v1/projects/{project_id}" },
   updateProject: { method: "PATCH", template: "/v1/projects/{project_id}" },
   listJobs: { method: "GET", template: "/v1/projects/{project_id}/jobs" },
+  latestUpload: { method: "GET", template: "/v1/projects/{project_id}/uploads/latest" },
   getJob: { method: "GET", template: "/v1/projects/{project_id}/jobs/{job_id}" },
   cancelJob: { method: "POST", template: "/v1/projects/{project_id}/jobs/{job_id}/cancel" },
   getBlueprint: { method: "GET", template: "/v1/projects/{project_id}/blueprints/{blueprint_id}" },
@@ -395,6 +562,7 @@ export const API_ROUTES = {
   patchFeatures: { method: "POST", template: "/v1/projects/{project_id}/blueprints/{blueprint_id}/features" },
   moveFeatures: { method: "POST", template: "/v1/projects/{project_id}/blueprints/{blueprint_id}/move" },
   setOpeningPieceAttributes: { method: "PATCH", template: "/v1/blueprints/{blueprint_id}/features/{feature_id}" },
+  setOpeningPieces: { method: "POST", template: "/v1/projects/{project_id}/blueprints/{blueprint_id}/opening-pieces" },
   locateBlueprint: { method: "GET", template: "/v1/blueprints/{blueprint_id}" },
   createUpload: { method: "POST", template: "/v1/uploads" },
   completeUpload: { method: "POST", template: "/v1/uploads/{file_uuid}/complete" },
@@ -407,10 +575,18 @@ export const API_ROUTES = {
   queryResolve: { method: "POST", template: "/v1/projects/{project_id}/query/resolve" },
   getInventory: { method: "GET", template: "/v1/projects/{project_id}/inventory" },
   setScale: { method: "PUT", template: "/v1/projects/{project_id}/blueprints/{blueprint_id}/scale" },
+  setRotation: { method: "PUT", template: "/v1/projects/{project_id}/blueprints/{blueprint_id}/rotation" },
+  getSheetText: { method: "GET", template: "/v1/projects/{project_id}/blueprints/{blueprint_id}/words" },
+  queryPrintedTables: { method: "POST", template: "/v1/projects/{project_id}/query/printed-tables" },
   geometrySelect: {
     method: "POST",
     template: "/v1/projects/{project_id}/blueprints/{blueprint_id}/geometry/select",
   },
+  listMarkups: { method: "GET", template: "/v1/projects/{project_id}/blueprints/{blueprint_id}/markups" },
+  createMarkup: { method: "POST", template: "/v1/projects/{project_id}/blueprints/{blueprint_id}/markups" },
+  updateMarkup: { method: "PATCH", template: "/v1/projects/{project_id}/blueprints/{blueprint_id}/markups/{markup_id}" },
+  deleteMarkup: { method: "DELETE", template: "/v1/projects/{project_id}/blueprints/{blueprint_id}/markups/{markup_id}" },
+  clipMarkups: { method: "POST", template: "/v1/projects/{project_id}/blueprints/{blueprint_id}/markups/clip" },
 } as const satisfies Record<string, { method: HttpMethod; template: string }>;
 
 export type RouteName = keyof typeof API_ROUTES;
@@ -474,6 +650,10 @@ const problemDetailsSchema = z.object({
   limit: z.number().nullish(),
   current: z.number().nullish(),
   action_required: z.string().nullish(),
+  checkout_url: z.string().nullish(),
+  // Set by the API layer for a client whose store forbids selling (commerce: info_only):
+  // what to tell the user instead of the plan remedies below.
+  remedy: z.string().nullish(),
 });
 
 export type ProblemDetails = z.infer<typeof problemDetailsSchema>;
@@ -486,6 +666,19 @@ const REMEDY: Record<string, string> = {
   quota_exceeded: `Use the \`open_kamai\` tool to open Kamai, where the plan can be changed. ${DO_NOT_RETRY_PLAN}`,
   org_quota_exceeded: `An administrator of the organization has to raise the limit. ${DO_NOT_RETRY_PLAN}`,
 };
+
+// The link goes into the model's context verbatim, so only the Kamai app's own plan page passes.
+function safeCheckoutUrl(raw: string | null | undefined): string | null {
+  if (!raw) return null;
+  try {
+    const url = new URL(raw);
+    return url.protocol === "https:" && /(^|\.)kamai\.io$/.test(url.hostname) && url.pathname === "/get-started"
+      ? url.toString()
+      : null;
+  } catch {
+    return null;
+  }
+}
 
 function messageFor(code: string, details: ProblemDetails): string {
   const base = MESSAGES[code] ?? MESSAGES.internal!;
@@ -504,10 +697,24 @@ function messageFor(code: string, details: ProblemDetails): string {
     parts[0] = `The Kamai ${details.plan} subscription has expired, so blueprints cannot be uploaded.`;
   }
 
-  const remedy = REMEDY[code];
+  // The server's narrowing wins: an info_only client gets its remedy and never a plan link.
+  const checkout = !details.remedy && code === "subscription_pending" ? safeCheckoutUrl(details.checkout_url) : null;
+  const remedy = details.remedy
+    ? details.remedy.slice(0, MAX_DETAIL)
+    : checkout
+      ? `A plan can be chosen at ${checkout} ; until then a project link opens the plan screen. ${DO_NOT_RETRY_PLAN}`
+      : REMEDY[code];
   if (remedy) parts.push(remedy);
   return parts.join(" ");
 }
+
+export const NOTICE_HEADER = "kamai-notice";
+
+/** The API layer's notice that callApi attached to a decoded result, for handlers that rebuild it. */
+export const noticeOf = (result: unknown): string | undefined =>
+  result && typeof result === "object" && typeof (result as { notice?: unknown }).notice === "string"
+    ? (result as { notice: string }).notice
+    : undefined;
 
 // The longest backend fix message worth carrying. The validation handler caps its own
 // detail at this length; the cap here is so a misbehaving server cannot flood the model.
@@ -586,7 +793,13 @@ async function callApi<T>(principal: Principal, route: RouteName, options: CallO
   }
 
   const body = await response.json();
-  return options.decode ? options.decode(body) : (body as T);
+  const decoded = options.decode ? options.decode(body) : (body as T);
+  // The API layer's word for the user that belongs to no field of the result, e.g. why a
+  // project comes back without its web-app link.
+  const notice = response.headers.get(NOTICE_HEADER)?.trim().slice(0, MAX_DETAIL);
+  return notice && decoded && typeof decoded === "object" && !Array.isArray(decoded)
+    ? ({ ...decoded, notice } as T)
+    : decoded;
 }
 
 /** Decode a query-route response against its contract schema. A response that does not
@@ -616,7 +829,17 @@ function decodeWith<S extends z.ZodType>(schema: S, route: RouteName) {
 
 const bp = (projectId: string, blueprintId: string) => ({ project_id: projectId, blueprint_id: blueprintId });
 
+const meSchema = z.object({
+  uid: z.string(),
+  email: z.string().nullish(),
+  app_links: z.boolean().optional(),
+  notice: z.string().nullish(),
+});
+
+export type Me = z.infer<typeof meSchema>;
+
 export const api = {
+  me: (p: Principal) => callApi<Me>(p, "me", { decode: (value) => meSchema.parse(value) }),
   // `include` is a comma-separated extras list; today the only value is "blueprints", which
   // embeds each project's blueprint summaries. The records already carry them, so asking for
   // them costs the API layer nothing — and NOT asking costs one extra request per project.
@@ -635,8 +858,12 @@ export const api = {
     blueprintId: string,
     limit = 400,
     cursor?: string,
+    extra: { cls?: string; folder?: string; name?: string; include?: string } = {},
   ) =>
-    callApi<GeometryPage>(p, "getGeometry", { params: bp(projectId, blueprintId), query: { limit, cursor } }),
+    callApi<GeometryPage>(p, "getGeometry", {
+      params: bp(projectId, blueprintId),
+      query: { limit, cursor, ...extra },
+    }),
 
   getTakeoff: (p: Principal, projectId: string, blueprintId: string) =>
     callApi<TakeoffPage>(p, "getTakeoff", { params: bp(projectId, blueprintId) }),
@@ -645,12 +872,46 @@ export const api = {
     p: Principal,
     projectId: string,
     blueprintId: string,
-    body: { element_ids?: string[]; highlight?: string[] },
+    body: { element_ids?: string[]; highlight?: string[]; legend?: boolean; include_markups?: boolean },
   ) =>
     callApi<PlanExport>(p, "exportPlan", {
       params: bp(projectId, blueprintId),
       body,
       decode: decodeWith(planExportSchema, "exportPlan"),
+    }),
+
+  listMarkups: (p: Principal, projectId: string, blueprintId: string) =>
+    callApi<MarkupList>(p, "listMarkups", {
+      params: bp(projectId, blueprintId),
+      decode: decodeWith(markupListSchema, "listMarkups"),
+    }),
+
+  createMarkup: (p: Principal, projectId: string, blueprintId: string, body: Record<string, unknown>) =>
+    callApi<MarkupChange>(p, "createMarkup", {
+      params: bp(projectId, blueprintId),
+      body,
+      decode: decodeWith(markupChangeSchema, "createMarkup"),
+    }),
+
+  updateMarkup: (p: Principal, projectId: string, blueprintId: string, markupId: string, body: Record<string, unknown>) =>
+    callApi<MarkupChange>(p, "updateMarkup", {
+      params: { ...bp(projectId, blueprintId), markup_id: markupId },
+      body,
+      decode: decodeWith(markupChangeSchema, "updateMarkup"),
+    }),
+
+  deleteMarkup: (p: Principal, projectId: string, blueprintId: string, markupId: string, version: number) =>
+    callApi<MarkupChange>(p, "deleteMarkup", {
+      params: { ...bp(projectId, blueprintId), markup_id: markupId },
+      query: { version },
+      decode: decodeWith(markupChangeSchema, "deleteMarkup"),
+    }),
+
+  clipMarkups: (p: Principal, projectId: string, blueprintId: string, body: Record<string, unknown>) =>
+    callApi<MarkupClip>(p, "clipMarkups", {
+      params: bp(projectId, blueprintId),
+      body,
+      decode: decodeWith(markupClipSchema, "clipMarkups"),
     }),
 
   exportTable: (p: Principal, projectId: string, body: TableExportBody) =>
@@ -666,8 +927,11 @@ export const api = {
   updateProject: (p: Principal, projectId: string, patch: { name?: string; description?: string }) =>
     callApi<ProjectSummary>(p, "updateProject", { params: { project_id: projectId }, body: patch }),
 
-  listJobs: (p: Principal, projectId: string) =>
-    callApi<JobSummary[]>(p, "listJobs", { params: { project_id: projectId } }),
+  listJobs: (p: Principal, projectId: string, page: { limit?: number; offset?: number } = {}) =>
+    callApi<JobSummary[]>(p, "listJobs", { params: { project_id: projectId }, query: { ...page } }),
+
+  latestUpload: (p: Principal, projectId: string) =>
+    callApi<LatestUpload>(p, "latestUpload", { params: { project_id: projectId } }),
 
   getJob: (p: Principal, projectId: string, jobId: string) =>
     callApi<JobSummary>(p, "getJob", { params: { project_id: projectId, job_id: jobId } }),
@@ -725,6 +989,14 @@ export const api = {
       query: { project_id: projectId },
       body,
     }),
+
+  setOpeningPieces: (
+    p: Principal,
+    projectId: string,
+    blueprintId: string,
+    body: { ids: string[]; tag?: "door" | "window"; height?: HeightStatement },
+  ) =>
+    callApi<OpeningPiecesWritten>(p, "setOpeningPieces", { params: bp(projectId, blueprintId), body }),
 
   createFolder: (
     p: Principal,
@@ -804,7 +1076,7 @@ export const api = {
     projectId: string,
     body: {
       selections: string[];
-      rows: Array<{ s: number; group?: Record<string, string | null> }>;
+      rows: Array<{ s: number; group?: Record<string, string | null>; ids?: Record<string, string[]> }>;
       ids_per_row?: number;
       max_ids?: number;
     },
@@ -827,6 +1099,32 @@ export const api = {
       params: bp(projectId, blueprintId),
       body: { label },
       decode: decodeWith(scaleResultSchema, "setScale"),
+    }),
+
+  setRotation: (p: Principal, projectId: string, blueprintId: string, rotation: number) =>
+    callApi<RotationResult>(p, "setRotation", {
+      params: bp(projectId, blueprintId),
+      body: { rotation },
+      decode: decodeWith(rotationResultSchema, "setRotation"),
+    }),
+
+  getSheetText: (
+    p: Principal,
+    projectId: string,
+    blueprintId: string,
+    query: Record<string, string | number | undefined>,
+  ) =>
+    callApi<SheetTextResult>(p, "getSheetText", {
+      params: bp(projectId, blueprintId),
+      query,
+      decode: decodeWith(sheetTextResultSchema, "getSheetText"),
+    }),
+
+  queryPrintedTables: (p: Principal, projectId: string, body: Record<string, unknown>) =>
+    callApi<PrintedTablesResult>(p, "queryPrintedTables", {
+      params: { project_id: projectId },
+      body,
+      decode: decodeWith(printedTablesResultSchema, "queryPrintedTables"),
     }),
 
   geometrySelect: (p: Principal, projectId: string, blueprintId: string, ids: string[], grid?: number) =>

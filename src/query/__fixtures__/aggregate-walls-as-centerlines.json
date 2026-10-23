@@ -1,0 +1,52 @@
+{
+  "project_id": "projWallsCl",
+  "project_name": "Centerlines only",
+  "blueprints": [
+    {
+      "blueprint_id": "bpWallsCl",
+      "name": "Ground floor",
+      "units": "metric",
+      "has_scale": true
+    }
+  ],
+  "group_by": [],
+  "groups": [
+    {
+      "count": 0,
+      "element_count": 0,
+      "element_ids": {},
+      "element_ids_truncated": false
+    }
+  ],
+  "groups_total": 1,
+  "groups_truncated": false,
+  "total": {
+    "count": 0,
+    "count_is_partial": false
+  },
+  "excluded": [
+    {
+      "blueprint_id": "bpWallsCl",
+      "name": "Ground floor",
+      "reason": "no_matching_elements"
+    }
+  ],
+  "total_is_partial": false,
+  "notes": [
+    "No wall polygons on these blueprints: their walls are drawn as centerlines. 2 found with category wall_centerlines (length only; a centerline has no area)."
+  ],
+  "selection": "q1.eNqrVkpTsqpWSk4sSU3PL6pUslIqT8zJKVaq1VHKBnKS80vzSpR0lAqA7IKi_KxwkKRzDlCkqBgolFhakg9ilytZGeoolQHJWgAoABkG",
+  "room_scope": {
+    "rule_version": "room-scope/3",
+    "narrowed": false,
+    "reason": "no_such_walls",
+    "kind": null,
+    "blueprint_ids": null,
+    "left_out": [],
+    "kept_other": [],
+    "unclassified": [],
+    "pending": [],
+    "level": null,
+    "notes": []
+  }
+}

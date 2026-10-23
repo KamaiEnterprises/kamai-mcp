@@ -27,35 +27,39 @@ describe("set_opening_height", () => {
   type Call = { url: string; method: string; body: Record<string, unknown> };
   type Reply = { status: number; body: unknown };
 
-  /** The API layer's PATCH route, one feature per request: PATCH
-   * /v1/blueprints/{blueprint_id}/features/{feature_id}?project_id=. A fetch stub cannot
-   * prove that route exists. Run `bun scripts/check-routes.ts <api base url>` against a
-   * real API for that.
+  /** The API layer's batch route: POST /v1/projects/{p}/blueprints/{b}/opening-pieces with the
+   * whole selection. Kamai decides what is written and what is
+   * refused; this stub does what the route does.
    *
-   * `replies` is keyed by feature id, so a test says what each element answers
-   * and the mixed cases need no ordering assumptions. An id with no entry gets
-   * the row it asked for back, which is what the real route does on a write
-   * that lands. */
+   * `replies` is keyed by element id. A 409 or a coded 404 refuses that element alone
+   * (wrong_class / not_found) and the rest are written; any other reply refuses the whole call
+   * and is the route's answer; an id with no entry is written and read back. */
   function stubPatch(calls: Call[], replies: Record<string, Reply> = {}) {
     vi.stubGlobal("fetch", async (url: URL, init?: RequestInit) => {
       const body = init?.body ? (JSON.parse(String(init.body)) as Record<string, unknown>) : {};
       calls.push({ url: String(url), method: init?.method ?? "GET", body });
-      const id = decodeURIComponent(String(url).split("/features/")[1]!.split("?")[0]!);
       const height = body.height as { value: number } | undefined;
-      const reply = replies[id] ?? {
-        status: 200,
-        body: {
-          id,
-          tag: body.tag ?? null,
-          height_units: height === undefined ? null : 100,
-          height_m: height === undefined ? null : 2.1,
-          feature_class: "wall_surface_with_opening",
-        },
-      };
-      return new Response(JSON.stringify(reply.body), {
-        status: reply.status,
-        headers: { "content-type": "application/json" },
-      });
+      const respond = (status: number, payload: unknown) =>
+        new Response(JSON.stringify(payload), { status, headers: { "content-type": "application/json" } });
+      const written: unknown[] = [];
+      const refused: unknown[] = [];
+      for (const id of [...new Set(body.ids as string[])]) {
+        const reply = replies[id];
+        const coded = (reply?.body as { code?: string } | undefined)?.code;
+        if (reply?.status === 409) refused.push({ id, code: "wrong_class", detail: "wrong class" });
+        else if (reply?.status === 404 && coded === "not_found") refused.push({ id, code: "not_found", detail: "gone" });
+        else if (reply && reply.status !== 200) return respond(reply.status, reply.body);
+        else
+          written.push(reply?.body ?? {
+            id,
+            tag: body.tag ?? null,
+            height_units: height === undefined ? null : 100,
+            height_m: height === undefined ? null : 2.1,
+            feature_class: "wall_surface_with_opening",
+          });
+      }
+      const fields = [...(height === undefined ? [] : ["height"]), ...(body.tag === undefined ? [] : ["tag"])];
+      return respond(200, { applied: written.length > 0, changed: written.length, fields, written, refused });
     });
   }
 
@@ -98,7 +102,7 @@ describe("set_opening_height", () => {
     expect(JSON.stringify(tool)).not.toMatch(/\d\.\d\s*m\b/);
   });
 
-  it("PATCHes one feature at a time, project in the query string", async () => {
+  it("POSTs the whole selection in one call", async () => {
     const calls: Call[] = [];
     stubPatch(calls);
     const client = await connect();
@@ -113,20 +117,14 @@ describe("set_opening_height", () => {
         height_quote: QUOTE,
       },
     });
-    expect(calls).toHaveLength(2);
-    expect(calls.map((c) => c.method)).toEqual(["PATCH", "PATCH"]);
-    expect(calls[0]!.url).toBe(
-      "http://127.0.0.1:8005/v1/blueprints/bp1/features/op-1?project_id=pr1",
-    );
-    expect(calls[1]!.url).toBe(
-      "http://127.0.0.1:8005/v1/blueprints/bp1/features/op-2?project_id=pr1",
-    );
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.method).toBe("POST");
+    expect(calls[0]!.url).toBe("http://127.0.0.1:8005/v1/projects/pr1/blueprints/bp1/opening-pieces");
     // The height travels exactly as the user stated it; the server witnesses the words
     // and does every conversion. No metres are computed here.
-    expect(calls[0]!.body).toEqual({ height: { value: 7, unit: "ft", quote: QUOTE } });
+    expect(calls[0]!.body).toEqual({ ids: ["op-1", "op-2"], height: { value: 7, unit: "ft", quote: QUOTE } });
     expect(calls[0]!.body).not.toHaveProperty("height_m");
     expect(calls[0]!.body).not.toHaveProperty("height_unit");
-    expect(calls[0]!.body).not.toHaveProperty("ids");
     const structured = result.structuredContent as Record<string, unknown>;
     expect(structured.applied).toBe(true);
     expect(structured.changed).toBe(2);
@@ -193,8 +191,7 @@ describe("set_opening_height", () => {
     });
     expect(result.isError).toBe(true);
     expect(JSON.stringify(result.content)).toContain("must be a height the user stated");
-    // The first wave learns the body is refused; the rest are never sent.
-    expect(calls.length).toBeLessThanOrEqual(4);
+    expect(calls).toHaveLength(1);
   });
 
   // A bare 404 means the API has no such route. That is not "no such element", and one
@@ -213,7 +210,7 @@ describe("set_opening_height", () => {
     const said = JSON.stringify(result.content);
     expect(said).toMatch(/not available on the server yet/);
     expect(said).not.toMatch(/No element with that id/);
-    expect(calls.length).toBeLessThanOrEqual(4);
+    expect(calls).toHaveLength(1);
   });
 
   it("keeps going past a coded not_found, which is per element", async () => {
@@ -230,7 +227,7 @@ describe("set_opening_height", () => {
     const structured = result.structuredContent as { changed: number; refused: Array<{ id: string; reason: string }> };
     expect(structured.changed).toBe(2);
     expect(structured.refused.map((r) => r.id)).toEqual(["gone-1"]);
-    expect(calls).toHaveLength(3);
+    expect(calls).toHaveLength(1);
   });
 
   it("points at find_elements for the ids when the query tools are on", async () => {
@@ -266,7 +263,7 @@ describe("set_opening_height", () => {
       arguments: { blueprint_id: "bp1", project_id: "pr1", ids: ["op-1"], tag: "window" },
     });
     expect(calls).toHaveLength(1);
-    expect(calls[0]!.body).toEqual({ tag: "window" });
+    expect(calls[0]!.body).toEqual({ ids: ["op-1"], tag: "window" });
     const structured = result.structuredContent as Record<string, unknown>;
     expect(structured.fields).toEqual(["tag"]);
     // Read back from the row, not echoed from the request: a tag-only write
@@ -331,19 +328,7 @@ describe("set_opening_height", () => {
     expect(JSON.stringify(result.content)).toMatch(/set it with set_scale/);
   });
 
-  it("still reads a status-only scale refusal from an older API layer", async () => {
-    const calls: Call[] = [];
-    stubPatch(calls, { "op-1": legacyNoScale });
-    const client = await connect();
-    const result = await client.callTool({
-      name: "set_opening_height",
-      arguments: { blueprint_id: "bp1", project_id: "pr1", ids: ["op-1"], height: 90, height_unit: "cm", height_quote: "90 cm doors" },
-    });
-    expect(result.isError).toBe(true);
-    expect(JSON.stringify(result.content)).toMatch(/scale has to be set first/i);
-  });
-
-  it("stops the fan-out once the sheet turns out to have no scale", async () => {
+  it("sends the selection once when the sheet turns out to have no scale", async () => {
     const calls: Call[] = [];
     stubPatch(calls, { "op-1": noScale, "op-2": noScale, "op-3": noScale, "op-4": noScale });
     const client = await connect();
@@ -359,9 +344,8 @@ describe("set_opening_height", () => {
       },
     });
     expect(result.isError).toBe(true);
-    // The first wave learns the sheet has no scale; the rest are never sent,
-    // because every one of them would fail for the same reason.
-    expect(calls.length).toBeLessThanOrEqual(4);
+    // One call: Kamai refuses the whole selection before writing any of it.
+    expect(calls).toHaveLength(1);
   });
 
   it("reports a mixed batch per id, and never as an overall success", async () => {
@@ -389,41 +373,6 @@ describe("set_opening_height", () => {
     expect(String(refused[0]!.reason)).toMatch(/not a wall-surface opening piece/i);
     // The id that was turned away is not hiding inside the count.
     expect(written.map((row) => row.id)).not.toContain("wall-9");
-  });
-
-  it("keeps at most four writes in flight", async () => {
-    let inFlight = 0;
-    let peak = 0;
-    vi.stubGlobal("fetch", async (url: URL) => {
-      inFlight += 1;
-      peak = Math.max(peak, inFlight);
-      await new Promise((resolve) => setTimeout(resolve, 1));
-      inFlight -= 1;
-      const id = decodeURIComponent(String(url).split("/features/")[1]!.split("?")[0]!);
-      return new Response(
-        JSON.stringify({
-          id,
-          tag: "door",
-          height_units: null,
-          height_m: null,
-          feature_class: "wall_surface_with_opening",
-        }),
-        { headers: { "content-type": "application/json" } },
-      );
-    });
-    const client = await connect();
-    const result = await client.callTool({
-      name: "set_opening_height",
-      arguments: {
-        blueprint_id: "bp1",
-        project_id: "pr1",
-        ids: Array.from({ length: 20 }, (_, i) => `op-${i}`),
-        tag: "door",
-      },
-    });
-    expect((result.structuredContent as Record<string, unknown>).changed).toBe(20);
-    expect(peak).toBeLessThanOrEqual(4);
-    expect(peak).toBeGreaterThan(1);
   });
 
   it("refuses a height with no unit, before calling the API", async () => {

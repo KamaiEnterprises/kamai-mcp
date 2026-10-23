@@ -1,0 +1,106 @@
+{
+  "project_id": "projEvalTower",
+  "project_name": "Eval Tower",
+  "blueprints": [
+    {
+      "blueprint_id": "bpEval_a",
+      "name": "Ground Floor",
+      "units": "metric",
+      "has_scale": true
+    },
+    {
+      "blueprint_id": "bpEval_unscaled",
+      "name": "Basement",
+      "units": null,
+      "has_scale": false
+    }
+  ],
+  "group_by": [],
+  "groups": [
+    {
+      "count": 4,
+      "area": "2.36 m²",
+      "perimeter": "24.80 m",
+      "unmeasured_count": 1,
+      "element_count": 4,
+      "element_ids": {
+        "bpEval_a": [
+          "wall1",
+          "wall2",
+          "wall3"
+        ],
+        "bpEval_unscaled": [
+          "wallS"
+        ]
+      },
+      "element_ids_truncated": false
+    }
+  ],
+  "groups_total": 1,
+  "groups_truncated": false,
+  "total": {
+    "count": 4,
+    "count_is_partial": false,
+    "area_is_partial": true
+  },
+  "excluded": [
+    {
+      "blueprint_id": "bpEval_unscaled",
+      "name": "Basement",
+      "reason": "needs_scale"
+    }
+  ],
+  "total_is_partial": false,
+  "notes": [
+    "Walls are measured without the electrical sheets, as they usually redraw the architect's walls. To include them, ask for every sheet or name those sheets.",
+    "Sheets with no discipline were kept in: Basement."
+  ],
+  "selection": "q1.eNqrVkpTsqpWSk4sSU3PL6pUslIqT8zJKVaq1VHKBnKS80vzSpR0lAqA7IKi_CzXssSckPzy1CKgWFExUDCxtCQfxC5XsjLUUSoDkrUAZRQZ7Q",
+  "room_scope": {
+    "rule_version": "room-scope/3",
+    "narrowed": true,
+    "reason": null,
+    "kind": "walls",
+    "blueprint_ids": [
+      "bpEval_a",
+      "bpEval_unscaled"
+    ],
+    "left_out": [
+      "E"
+    ],
+    "kept_other": [],
+    "unclassified": [
+      "bpEval_unscaled"
+    ],
+    "pending": [],
+    "level": null,
+    "notes": [
+      {
+        "key": "architect_mixed",
+        "params": {
+          "left_out": [
+            "E"
+          ]
+        },
+        "text": {
+          "en": "Walls are measured without the electrical sheets, as they usually redraw the architect's walls. To include them, ask for every sheet or name those sheets.",
+          "he": "הקירות נמדדו ללא גיליונות חשמל, כי בדרך כלל הם משרטטים שוב את קירות האדריכלות. כדי לכלול אותם בקשו את כל הגיליונות או ציינו אותם בשמם.",
+          "fr": "Les murs sont mesurés sans les plans électricité, car ils redessinent en général les murs de l'architecte. Pour les inclure, demandez toutes les feuilles ou nommez ces plans."
+        }
+      },
+      {
+        "key": "unclassified",
+        "params": {
+          "unclassified": [
+            "bpEval_unscaled"
+          ]
+        },
+        "text": {
+          "en": "Sheets with no discipline were kept in: Basement.",
+          "he": "גיליונות ללא דיסציפלינה נכללו: Basement.",
+          "fr": "Les plans sans discipline ont été conservés : Basement."
+        }
+      }
+    ]
+  }
+}

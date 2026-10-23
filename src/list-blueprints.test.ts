@@ -66,6 +66,35 @@ describe("list_blueprints", () => {
     expect(out.next_cursor).toBe("c2");
   });
 
+  it("names light (not analysed) blueprints of a pick-pages upload and says not to wait for them", async () => {
+    const items = [{
+      ...project("p1", 0),
+      blueprints: [
+        { id: "l1", name: "(1) Set", ready: false, analysis: "light" },
+        { id: "q1", name: "(2) Set", ready: false, analysis: "queued" },
+        { id: "f1", name: "(3) Set", ready: true, analysis: "full" },
+        { id: "n1", name: "Plan", ready: true, analysis: null },
+      ],
+    }];
+    stubApi({ "GET /v1/projects": { body: { items, next_cursor: null } } });
+    const client = await connect({ queryTools: false });
+    const out = structured<Out>(await client.callTool({ name: "list_blueprints", arguments: {} }));
+    expect(out.projects[0]!.blueprints).toEqual([
+      { blueprint_id: "l1", name: "(1) Set", ready: false, analysis: "light" },
+      { blueprint_id: "q1", name: "(2) Set", ready: false, analysis: "queued" },
+      { blueprint_id: "f1", name: "(3) Set", ready: true },
+      { blueprint_id: "n1", name: "Plan", ready: true },
+    ]);
+    expect(out.notes.some((n) => n.includes("not analysed") && n.includes("Do not wait"))).toBe(true);
+  });
+
+  it("adds no light note when no blueprint is light", async () => {
+    stubApi({ "GET /v1/projects": { body: { items: [project("p1", 2)], next_cursor: null } } });
+    const client = await connect({ queryTools: false });
+    const out = structured<Out>(await client.callTool({ name: "list_blueprints", arguments: {} }));
+    expect(out.notes.some((n) => n.includes("not analysed"))).toBe(false);
+  });
+
   it("reads an empty project_id as none, and lists every project", async () => {
     // Models sent {"project_id": ""} to mean "every project", and the refusal cost a
     // round trip.

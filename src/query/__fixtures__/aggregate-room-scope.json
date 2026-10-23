@@ -1,0 +1,107 @@
+{
+  "project_id": "projEvalTower",
+  "project_name": "Eval Tower",
+  "blueprints": [
+    {
+      "blueprint_id": "bpEval_a",
+      "name": "Ground Floor",
+      "units": "metric",
+      "has_scale": true
+    },
+    {
+      "blueprint_id": "bpEval_unscaled",
+      "name": "Basement",
+      "units": null,
+      "has_scale": false
+    }
+  ],
+  "group_by": [],
+  "groups": [
+    {
+      "count": 5,
+      "area": "56.64 m²",
+      "perimeter": "58.40 m",
+      "unmeasured_count": 1,
+      "element_count": 5,
+      "element_ids": {
+        "bpEval_a": [
+          "bath",
+          "kitchen",
+          "living",
+          "mitbach"
+        ],
+        "bpEval_unscaled": [
+          "storage"
+        ]
+      },
+      "element_ids_truncated": false
+    }
+  ],
+  "groups_total": 1,
+  "groups_truncated": false,
+  "total": {
+    "count": 5,
+    "count_is_partial": false,
+    "area_is_partial": true
+  },
+  "excluded": [
+    {
+      "blueprint_id": "bpEval_unscaled",
+      "name": "Basement",
+      "reason": "needs_scale"
+    }
+  ],
+  "total_is_partial": false,
+  "notes": [
+    "Rooms are counted without the electrical sheets, as they usually redraw the architect's rooms. To include them, ask for every sheet or name those sheets.",
+    "Sheets with no discipline were kept in: Basement."
+  ],
+  "selection": "q1.eNoViDsKwCAQBe_yapu09rlBLiBiAvn4ZP0RxLtn0wwzM7DDDnhXwkF5YSHkkzENLg3PGgsMknoSnmtz98YeRJ9kna4W_t5hF4OmnB9oShn6",
+  "room_scope": {
+    "rule_version": "room-scope/3",
+    "narrowed": true,
+    "reason": null,
+    "kind": "rooms",
+    "blueprint_ids": [
+      "bpEval_a",
+      "bpEval_unscaled"
+    ],
+    "left_out": [
+      "E"
+    ],
+    "kept_other": [],
+    "unclassified": [
+      "bpEval_unscaled"
+    ],
+    "pending": [],
+    "level": null,
+    "notes": [
+      {
+        "key": "architect_mixed",
+        "params": {
+          "left_out": [
+            "E"
+          ]
+        },
+        "text": {
+          "en": "Rooms are counted without the electrical sheets, as they usually redraw the architect's rooms. To include them, ask for every sheet or name those sheets.",
+          "he": "החדרים נספרו ללא גיליונות חשמל, כי בדרך כלל הם משרטטים שוב את חדרי האדריכלות. כדי לכלול אותם בקשו את כל הגיליונות או ציינו אותם בשמם.",
+          "fr": "Les pièces sont comptées sans les plans électricité, car ils redessinent en général les pièces de l'architecte. Pour les inclure, demandez toutes les feuilles ou nommez ces plans."
+        }
+      },
+      {
+        "key": "unclassified",
+        "params": {
+          "unclassified": [
+            "bpEval_unscaled"
+          ]
+        },
+        "text": {
+          "en": "Sheets with no discipline were kept in: Basement.",
+          "he": "גיליונות ללא דיסציפלינה נכללו: Basement.",
+          "fr": "Les plans sans discipline ont été conservés : Basement."
+        }
+      }
+    ]
+  }
+}

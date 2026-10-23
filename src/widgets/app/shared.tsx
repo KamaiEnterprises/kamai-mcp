@@ -201,6 +201,12 @@ export const KAMAI_APP_URL = "https://app.kamai.io";
 // the sandbox (measured in Chromium 2026-09-24), so a plain click shows how instead.
 export const restrictedFrame = () => window.origin === "null";
 
+/** The app's own sheet route, /projects/:id/:blueprintId (BlueprintViewPage). */
+export function blueprintUrl(projectId: string, blueprintId?: string | null): string {
+  const project = `${KAMAI_APP_URL}/projects/${encodeURIComponent(projectId)}`;
+  return blueprintId ? `${project}/${encodeURIComponent(blueprintId)}` : project;
+}
+
 export function OpenKamai({
   href = KAMAI_APP_URL,
   label = "Open Kamai",

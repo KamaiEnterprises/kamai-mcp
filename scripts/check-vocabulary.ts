@@ -1,12 +1,15 @@
-// bun scripts/check-vocabulary.ts <api-base-url> <api-key>
+// bun scripts/check-vocabulary.ts <api-base-url> <api-key> [--write]
 //
-// Compares GET /v1/vocabulary with src/query/vocabulary.snapshot.json, and the enums
-// kamai-mcp validates tool inputs against with that snapshot. A drift here is a tool
-// that refuses a value the API accepts, or sends one it refuses.
-import snapshot from "../src/query/vocabulary.snapshot.json" with { type: "json" };
-import { CATEGORIES, CLASSES, GROUP_KEYS, HANDINGS, ORDER_FIELDS, SUB_CLASSES } from "../src/query/vocabulary.ts";
+// Compares GET /v1/vocabulary with src/query/vocabulary.snapshot.json, the built-in answer a
+// fresh instance starts with (and keeps while the API cannot be read). --write records the live
+// answer as the new snapshot.
+import { writeFileSync } from "node:fs";
 
-const [baseArg, key] = process.argv.slice(2);
+import type { Vocabulary } from "../src/query/contract.ts";
+import snapshot from "../src/query/vocabulary.snapshot.json" with { type: "json" };
+import { listsOf } from "../src/query/vocabulary.ts";
+
+const [baseArg, key, flag] = process.argv.slice(2);
 const base = (baseArg ?? "").replace(/\/+$/, "");
 if (!base || !key) {
   console.error("usage: bun scripts/check-vocabulary.ts <api-base-url> <api-key>");
@@ -29,20 +32,6 @@ function diff(a: unknown, b: unknown, path = "$", out: string[] = []): string[] 
 }
 
 const problems: string[] = [];
-const sorted = (values: readonly string[]) => [...values].sort();
-const enums: Array<[string, readonly string[], readonly string[]]> = [
-  ["categories", CATEGORIES, Object.keys(snapshot.categories)],
-  ["classes", CLASSES, snapshot.classes],
-  ["sub_classes", SUB_CLASSES, snapshot.sub_classes],
-  ["group_by", GROUP_KEYS, snapshot.group_by],
-  ["order_by", ORDER_FIELDS, snapshot.order_by],
-  ["handing", HANDINGS, snapshot.handing],
-];
-for (const [name, ours, recorded] of enums) {
-  if (JSON.stringify(sorted(ours)) !== JSON.stringify(sorted(recorded))) {
-    problems.push(`src/query/vocabulary.ts ${name} differs from the snapshot`);
-  }
-}
 
 const response = await fetch(`${base}/v1/vocabulary`, {
   headers: { authorization: `Bearer ${key}`, accept: "application/json" },
@@ -51,7 +40,18 @@ if (!response.ok) {
   console.error(`${base}/v1/vocabulary answered ${response.status}`);
   process.exit(2);
 }
-problems.push(...diff(snapshot, await response.json()));
+const live = await response.json();
+if (flag === "--write") {
+  // The snapshot is what every fresh instance starts from: never record one that lacks a list.
+  if (!listsOf(live as Vocabulary)) {
+    console.error("live answer is missing or has an empty list; snapshot not written");
+    process.exit(1);
+  }
+  writeFileSync(new URL("../src/query/vocabulary.snapshot.json", import.meta.url), `${JSON.stringify(live, null, 2)}\n`);
+  console.log("snapshot written");
+  process.exit(0);
+}
+problems.push(...diff(snapshot, live));
 
 if (problems.length) {
   console.error(`vocabulary drift (${problems.length}):`);

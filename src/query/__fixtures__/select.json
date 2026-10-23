@@ -28,8 +28,7 @@
       "handing": "LH",
       "folder": "Doors",
       "folder_path": "Doors",
-      "area": "0.40 m²",
-      "perimeter": "2.80 m",
+      "counted_only": true,
       "width": "100 cm wide"
     },
     {
@@ -43,8 +42,7 @@
       "tag": "D2",
       "folder": "Doors",
       "folder_path": "Doors",
-      "area": "0.20 m²",
-      "perimeter": "2.40 m",
+      "counted_only": true,
       "width": "90 cm wide"
     },
     {
@@ -58,8 +56,7 @@
       "tag": "D3",
       "folder": "Doors",
       "folder_path": "Doors",
-      "area": "0.16 m²",
-      "perimeter": "2.00 m",
+      "counted_only": true,
       "width": "80 cm wide"
     }
   ],
@@ -68,6 +65,7 @@
   "offset": 0,
   "next_offset": 3,
   "excluded": [],
+  "excluded_counts": {},
   "total_is_partial": false,
   "notes": [],
   "selection": "q1.eNo1jDsOgzAQRO8y9RZB6bbPDdKhCNnYRgaLtZZPhBB3z6agm6d5MycS-IQvW6ya57XLYQG38PW1u9I50B09PoTerXEQPcAIIrrgIkwGKc_B1AJ-EiTZ54NQragq43_-lm9UM3Zwc_0A4CclNg"

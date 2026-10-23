@@ -112,8 +112,33 @@ function applyTheme(context: unknown): void {
   if (theme === "light" || theme === "dark") {
     document.documentElement.setAttribute("data-theme", theme);
   }
-  const font = styles.fontFamily ?? styles["font-family"];
-  if (typeof font === "string" && font) document.body.style.fontFamily = font;
+  applyHostVariables(styles.variables);
+  applyHostFonts(styles.css);
+}
+
+// McpUiHostContext.styles.variables: a flat map of "--color-background-primary",
+// "--font-sans" and the rest. styles.css drives the fallbacks from these names, so a
+// host that sends nothing (Open WebUI) keeps Kamai's own values.
+function applyHostVariables(variables: unknown): void {
+  if (!variables || typeof variables !== "object") return;
+  const root = document.documentElement;
+  for (const [name, value] of Object.entries(variables as JsonRecord)) {
+    if (!name.startsWith("--")) continue;
+    if (typeof value === "string" && value) root.style.setProperty(name, value);
+    else root.style.removeProperty(name);
+  }
+}
+
+function applyHostFonts(css: unknown): void {
+  const fonts = css && typeof css === "object" ? (css as JsonRecord).fonts : undefined;
+  if (typeof fonts !== "string" || !fonts) return;
+  let tag = document.getElementById("kamai-host-fonts");
+  if (!tag) {
+    tag = document.createElement("style");
+    tag.id = "kamai-host-fonts";
+    document.head.appendChild(tag);
+  }
+  if (tag.textContent !== fonts) tag.textContent = fonts;
 }
 
 function deliver(structuredContent: unknown): void {
@@ -396,3 +421,12 @@ export function openLink(href: string): Promise<unknown> {
   return rpc("ui/open-link", { url: href }).catch(() => window.open(href, "_blank"));
 }
 
+// Read-only view of what the host told us at ui/initialize, for the capability probe.
+// Copies, so a caller cannot mutate the bridge's own state.
+export function getHostHandshake(): { initialize: JsonRecord | null; hostContext: JsonRecord; silentHost: boolean } {
+  return {
+    initialize: initializeResult ? { ...initializeResult } : null,
+    hostContext: { ...hostContext },
+    silentHost,
+  };
+}

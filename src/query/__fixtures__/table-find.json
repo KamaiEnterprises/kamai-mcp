@@ -36,12 +36,6 @@
       "type": "text"
     },
     {
-      "key": "area",
-      "label": "Area",
-      "type": "area",
-      "align": "right"
-    },
-    {
       "key": "width",
       "label": "Width",
       "type": "text"
@@ -56,7 +50,6 @@
         "tag": "D1",
         "folder": "Doors",
         "handing": "LH",
-        "area": "0.40 m²",
         "width": "100 cm wide"
       },
       "kind": "item",
@@ -79,7 +72,6 @@
         "tag": "D2",
         "folder": "Doors",
         "handing": null,
-        "area": "0.20 m²",
         "width": "90 cm wide"
       },
       "kind": "item",
@@ -102,7 +94,6 @@
         "tag": "D3",
         "folder": "Doors",
         "handing": null,
-        "area": "0.16 m²",
         "width": "80 cm wide"
       },
       "kind": "item",

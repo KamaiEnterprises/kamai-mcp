@@ -1,0 +1,49 @@
+{
+  "status": "ok",
+  "frame": "page_fraction",
+  "page": {
+    "width": 2592.0,
+    "height": 1728.0
+  },
+  "ocr": {
+    "tiles": 1,
+    "basis": "cv_ocr",
+    "failed_tiles": 0
+  },
+  "counts": {
+    "digital": 3
+  },
+  "total": 3,
+  "next_cursor": "AXsiciI6InNhbXBsZS1yZWNvcmQiLCJmIjoiYjA3YTEzNTdlZWY0ZWY3MiIsIm8iOjJ9",
+  "room_links_status": "ok",
+  "rooms": {
+    "kitchen": "Net area: Kitchen",
+    "living": "Net area: Living"
+  },
+  "words": [
+    {
+      "text": "KITCHEN",
+      "bbox": [
+        0.1379,
+        0.2068,
+        0.2482,
+        0.262
+      ],
+      "source": "digital",
+      "room_id": "kitchen",
+      "rot": 0
+    },
+    {
+      "text": "CONCRETE",
+      "bbox": [
+        0.6435,
+        0.2758,
+        0.7538,
+        0.3309
+      ],
+      "source": "digital",
+      "room_id": "living",
+      "rot": 0
+    }
+  ]
+}

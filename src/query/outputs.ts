@@ -15,7 +15,20 @@ const blueprints = z.array(
   }),
 );
 const excluded = z.array(z.object({ blueprint_id: z.string(), name: z.string().nullish(), reason: z.string() }));
+const excludedCounts = z
+  .record(z.string(), z.number())
+  .describe("Every reason's full count of excluded blueprints; `excluded` lists up to 25 per reason.");
 const notes = z.array(z.string()).describe("Caveats about this exact result. Read them before answering.");
+const roomScope = z
+  .object({
+    rule_version: z.string(),
+    narrowed: z.boolean(),
+    reason: z.string().nullish(),
+    blueprint_ids: z.array(z.string()).nullish(),
+    left_out: z.array(z.string()).optional(),
+    kind: z.string().nullish().describe("rooms | walls: what was narrowed; null when nothing was"),
+  })
+  .describe("Which sheets a project-wide room or wall query read. When narrowed, say so in one sentence.");
 const selection = z
   .string()
   .nullable()
@@ -59,11 +72,21 @@ export const countElementsOutput = z.object({
       count_is_partial: z.boolean().optional(),
       area_is_partial: z.boolean().nullish(),
       units_conflict: z.string().nullish(),
+      sum_note: z
+        .string()
+        .nullish()
+        .describe("Set when the total is not the plain sum of the groups, and why."),
+      not_added: z
+        .object({ count: z.number(), length: z.string().nullish(), classes: z.array(z.string()) })
+        .nullish()
+        .describe("Listed in a group but not added to the total: wall surfaces whose walls the total already holds."),
     })
     .optional(),
   excluded: excluded.optional(),
+  excluded_counts: excludedCounts.optional(),
   total_is_partial: z.boolean().optional(),
   notes,
+  room_scope: roomScope.optional(),
   selection: selection.optional(),
   truncated: z.boolean().optional(),
 });
@@ -87,6 +110,7 @@ export const findElementsOutput = z.object({
       folder_path: z.string().nullish(),
       blueprint_discipline: z.string().nullish(),
       is_user_drawn: z.boolean().nullish(),
+      counted_only: z.boolean().nullish(),
       needs_scale: z.boolean().nullish(),
       area: z.string().nullish(),
       perimeter: z.string().nullish(),
@@ -103,8 +127,10 @@ export const findElementsOutput = z.object({
   offset: z.number().optional(),
   next_offset: z.number().nullish(),
   excluded: excluded.optional(),
+  excluded_counts: excludedCounts.optional(),
   total_is_partial: z.boolean().optional(),
   notes,
+  room_scope: roomScope.optional(),
   selection: selection.optional(),
   truncated: z.boolean().optional(),
 });
@@ -157,6 +183,7 @@ export const wallSurfaceOutput = z.object({
     })
     .optional(),
   notes,
+  room_scope: roomScope.optional(),
   selection: selection.optional(),
   truncated: z.boolean().optional(),
 });
@@ -173,6 +200,17 @@ export const setScaleOutput = z.object({
     .describe("Opening heights stored in drawing units that now read differently. Restate them with set_opening_height."),
   needs_scale: z.boolean(),
   scale_unconfirmed: z.boolean(),
+});
+
+export const setRotationOutput = z.object({
+  blueprint_id: z.string(),
+  name: z.string().nullish(),
+  previous: z.number().nullish().describe("The rotation before this call."),
+  rotation: z.number(),
+  auto_rotation: z
+    .number()
+    .nullish()
+    .describe("How far Kamai turned the page upright at upload, clockwise; null when not known."),
 });
 
 const cell = z.union([z.string(), z.number(), z.null()]);
@@ -226,4 +264,59 @@ export const elementOutlinesOutput = z.object({
   features: z.array(z.record(z.string(), z.unknown())),
   missing: z.array(z.string()),
   omitted: z.array(z.string()).optional(),
+});
+
+const sheetBox = z.array(z.number()).describe("[x0, y0, x1, y1] in fractions (0..1) of the page");
+
+export const sheetTextOutput = z.object({
+  status: z.string().describe("ok | empty | not_read | unavailable"),
+  total: z.number().nullish(),
+  next_cursor: z.string().nullish(),
+  rooms: z.record(z.string(), z.string()).nullish().describe("{room_id: room name}"),
+  words: z.array(
+    z.object({
+      text: z.string(),
+      bbox: sheetBox,
+      source: z.string(),
+      room_id: z.string().nullish(),
+    }),
+  ),
+  note: z.string().nullish(),
+  oversized: z.boolean().optional().describe("The page is larger than a host delivers; ask again with a smaller limit."),
+  notes: notes.optional(),
+});
+
+export const printedTablesOutput = z.object({
+  status: z.string(),
+  sheets: z
+    .array(z.object({ blueprint_id: z.string(), state: z.string().describe("ok | empty | not_extracted | unavailable | not_analysed"), note: z.string().nullish() }))
+    .nullish(),
+  tables: z
+    .array(
+      z.object({
+        id: z.string(),
+        blueprint_id: z.string().nullish(),
+        title: z.string().nullish(),
+        lossy: z.boolean().nullish(),
+        complete: z.boolean().nullish(),
+        coverage: z.object({ cells_present: z.number().nullish(), cells_total: z.number().nullish() }).nullish(),
+        n_rows: z.number().nullish(),
+        n_cols: z.number().nullish(),
+      }),
+    )
+    .nullish(),
+  table: z
+    .object({
+      id: z.string(),
+      title: z.string().nullish(),
+      header: z.array(z.unknown()).nullish(),
+      rows: z.array(z.unknown()).nullish(),
+      markdown: z.string().nullish(),
+      lossy: z.boolean().nullish(),
+    })
+    .nullish(),
+  next_cursor: z.string().nullish(),
+  note: z.string().nullish(),
+  oversized: z.boolean().optional().describe("The page is larger than a host delivers; ask again with a smaller limit."),
+  notes: notes.optional(),
 });

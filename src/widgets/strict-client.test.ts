@@ -26,6 +26,7 @@ const geometry = {
   text: null,
   text_total: null,
   text_next_cursor: null,
+  classes: [{ cls: "room", count: 1 }],
 };
 const takeoff = {
   blueprint_id: "bp1",

@@ -35,9 +35,19 @@ export function instrumentServer(server: McpServer, principal: Principal, postho
     beforeSend: (event) => {
       if (event.event === "$identify") return null;
       delete event.properties.$mcp_response;
+      dropClientMeta(event.properties.$mcp_parameters);
+      // The probe's report is a device fingerprint, already logged in bounded form as
+      // widget_probe; its raw argument stays out of PostHog.
+      if (event.properties.$mcp_tool_name === "report_host_probe") delete event.properties.$mcp_parameters;
       return event;
     },
   });
+}
+
+// A request's _meta belongs to the client, not to the call.
+export function dropClientMeta(parameters: unknown): void {
+  const params = (parameters as { request?: { params?: unknown } } | null | undefined)?.request?.params;
+  if (params !== null && typeof params === "object") delete (params as Record<string, unknown>)._meta;
 }
 
 const FLUSH_CAP_MS = 2000;

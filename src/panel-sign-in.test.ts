@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { connect, structured } from "./testing/harness.ts";
+import { connect, structured, stubApi } from "./testing/harness.ts";
 
 type Tool = { name: string; _meta?: { ui?: { visibility?: string[] } } };
 
@@ -8,6 +8,7 @@ afterEach(() => vi.unstubAllGlobals());
 
 describe("open_kamai panel sign-in", () => {
   it("off by default: no session tool, open_kamai unchanged", async () => {
+    stubApi({ "GET /v1/me": { body: { uid: "test", app_links: true } } });
     const client = await connect();
     const names = ((await client.listTools()).tools as Tool[]).map((t) => t.name);
     expect(names).not.toContain("open_kamai_session");
@@ -16,6 +17,7 @@ describe("open_kamai panel sign-in", () => {
   });
 
   it("on: open_kamai tells the panel to sign in, and the session tool is app-only", async () => {
+    stubApi({ "GET /v1/me": { body: { uid: "test", app_links: true } } });
     const client = await connect({ panelSignIn: true });
     const tools = (await client.listTools()).tools as Tool[];
     const session = tools.find((t) => t.name === "open_kamai_session");

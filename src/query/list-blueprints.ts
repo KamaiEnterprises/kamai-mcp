@@ -16,10 +16,26 @@ import {
 
 const PAGE = 50;
 
+const NOT_ANALYSED_NOTE =
+  "Blueprints with analysis 'light' were uploaded to be picked page by page and are not analysed: they can be " +
+  "viewed in Kamai, but hold no rooms, measurements, tables or objects until the user picks them in the app " +
+  "(Analyse). Do not wait for them and do not count on them; 'queued' or 'running' means the analysis is on its way.";
+
+function rowOf(b: { id: string; name?: string | null; ready: boolean; analysis?: BlueprintRow["analysis"] | null }): BlueprintRow {
+  const row: BlueprintRow = { blueprint_id: b.id, name: b.name ?? null, ready: b.ready };
+  if (b.analysis && b.analysis !== "full") row.analysis = b.analysis;
+  return row;
+}
+
+function noteNotAnalysed(result: Output): void {
+  if (result.projects.some((p) => p.blueprints.some((b) => b.analysis))) result.notes.push(NOT_ANALYSED_NOTE);
+}
+
 const blueprintRow = z.object({
   blueprint_id: z.string(),
   name: z.string().nullish(),
   ready: z.boolean(),
+  analysis: z.enum(["light", "queued", "running", "full", "failed"]).optional(),
   inventory: z.record(z.string(), z.unknown()).optional(),
 });
 
@@ -103,7 +119,7 @@ async function oneProject(ctx: ToolContext, projectId: string, includeInventory:
   ]);
   const byId = new Map((inventory?.blueprints ?? []).map((entry) => [entry.blueprint_id, entry]));
   const blueprints: BlueprintRow[] = detail.blueprints.map((b) => {
-    const row: BlueprintRow = { blueprint_id: b.id, name: b.name ?? null, ready: b.ready };
+    const row = rowOf(b);
     const entry = byId.get(b.id);
     if (entry) {
       const { blueprint_id: _id, name: _name, ...rest } = entry;
@@ -118,6 +134,7 @@ async function oneProject(ctx: ToolContext, projectId: string, includeInventory:
     next_cursor: null,
     notes,
   };
+  noteNotAnalysed(result);
   if (inventoryMissing) {
     notes.push("This Kamai server cannot list what the blueprints contain yet, so there is no inventory here.");
   }
@@ -158,7 +175,7 @@ async function allProjects(ctx: ToolContext, cursor: string | undefined): Promis
     const projects = page.items.map((p) => ({
       project_id: p.id,
       project_name: p.name,
-      blueprints: (p.blueprints ?? []).map((b) => ({ blueprint_id: b.id, name: b.name ?? null, ready: b.ready })),
+      blueprints: (p.blueprints ?? []).map(rowOf),
     }));
     return {
       projects,
@@ -169,12 +186,14 @@ async function allProjects(ctx: ToolContext, cursor: string | undefined): Promis
   };
 
   let result = await build(PAGE);
+  noteNotAnalysed(result);
   // Too many projects for one result: ask the API for a page that fits, so next_cursor is
   // its own and resumes exactly after the last project shown. Trimming here would leave a
   // cursor that skips the projects dropped.
   const fit = entriesThatFit(result, (copy) => copy.projects);
   if (fit < result.projects.length) {
     result = await build(fit);
+    noteNotAnalysed(result);
     result.notes.push(
       `This page holds ${result.projects.length} project(s), fewer than usual, to stay within what a host ` +
         "delivers; next_cursor continues the list.",

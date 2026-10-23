@@ -181,11 +181,11 @@ describe("render_table with authored rows", () => {
     expect(out.blueprints.map((b) => b.blueprint_id)).toEqual(["bpEval_a", "bpEval_b"]);
   });
 
-  it("counts an element once when a row names it and its group holds it too", async () => {
-    // A row's own ids and its resolved ids were added, so D4 named by the model AND found
-    // by its group counted as two elements.
+  it("sends a row's own ids with its pointer and takes Kamai's merged count", async () => {
+    // Kamai merges them and counts an id both hold once; this side only relays.
     const d4 = { folder: "Doors", sub_class: "double swing door", tag: "D4" };
-    const { result } = await call(
+    const merged = { element_ids: { bpEval_a: ["d4", "d9"] }, element_count: 2, element_ids_truncated: false };
+    const { result, calls } = await call(
       "render_table",
       {
         project_id: P,
@@ -199,13 +199,16 @@ describe("render_table with authored rows", () => {
       },
       {
         [`GET /v1/projects/${P}`]: { body: project },
-        [`POST /v1/projects/${P}/query/resolve`]: { body: { rows: [clone(resolve.rows[0]!), clone(resolve.rows[0]!)] } },
+        [`POST /v1/projects/${P}/query/resolve`]: { body: { rows: [clone(resolve.rows[0]!), merged] } },
       },
     );
     expect(result.isError, errorText(result)).toBeFalsy();
+    expect(calls.find((c) => c.path.endsWith("/query/resolve"))!.body).toMatchObject({
+      rows: [{ s: 0, group: d4, ids: { bpEval_a: ["d4"] } }, { s: 0, group: d4, ids: { bpEval_a: ["d4", "d9"] } }],
+    });
     const out = structured<Table>(result);
-    expect(out.rows[0]).toMatchObject({ element_count: 1, element_ids: { bpEval_a: ["d4"] } });
-    expect(out.rows[1]).toMatchObject({ element_count: 2, element_ids: { bpEval_a: ["d4", "d9"] } });
+    expect(out.rows[0]).toMatchObject({ element_count: resolve.rows[0]!.element_count, element_ids: resolve.rows[0]!.element_ids });
+    expect(out.rows[1]).toMatchObject({ element_count: 2, element_ids: merged.element_ids });
   });
 
   it("puts each resolved id set on the row that pointed at it, after rows that point nowhere", async () => {
@@ -236,15 +239,15 @@ describe("render_table with authored rows", () => {
     );
     expect(result.isError, errorText(result)).toBeFalsy();
     expect(calls.find((c) => c.path.endsWith("/query/resolve"))!.body).toMatchObject({
-      rows: [{ s: 0 }, { s: 0, group: d4 }, { s: 1, group: { ref: "se0951e:d1" } }],
+      rows: [{ s: 0 }, { s: 0, group: d4, ids: { bpEval_a: ["d1"] } }, { s: 1, group: { ref: "se0951e:d1" } }],
     });
     const out = structured<Table>(result);
     expect(out.rows[0]).toMatchObject({ kind: "note", element_count: 0, element_ids: {} });
     expect(out.rows[1]).toMatchObject({ element_count: 1, element_ids: { bpEval_b: ["d_wc"] } });
     expect(out.rows[2]).toMatchObject({ kind: "total", element_count: 6 });
     expect(out.rows[2]!.element_ids).toEqual(resolve.rows[1]!.element_ids);
-    // its own id AND the resolved one, merged, each counted
-    expect(out.rows[3]).toMatchObject({ element_count: 2, element_ids: { bpEval_a: ["d1", "d4"] } });
+    // what Kamai answered for this row, its own id sent along
+    expect(out.rows[3]).toMatchObject({ element_count: resolve.rows[0]!.element_count, element_ids: resolve.rows[0]!.element_ids });
     expect(out.rows[4]).toMatchObject({ element_count: 1, element_ids: { bpEval_a: ["d1"] } });
     expect(out.problems).toEqual([]);
   });

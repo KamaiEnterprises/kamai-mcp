@@ -11,9 +11,9 @@ const UI_SCHEME = "ui://kamai";
 
 // Hosts cache resource contents by URI for up to about an hour, so any breaking
 // change to a widget needs a new version here.
-export const WIDGET_VERSION = "v30";
+export const WIDGET_VERSION = "v33";
 
-export const WIDGET_NAMES = ["projects", "blueprint", "takeoff", "upload", "iframetest", "table"] as const;
+export const WIDGET_NAMES = ["projects", "blueprint", "takeoff", "upload", "iframetest", "table", "probe"] as const;
 
 export type WidgetName = (typeof WIDGET_NAMES)[number];
 
@@ -95,6 +95,9 @@ export const CSP: Partial<Record<WidgetName, Csp>> = {
   // A row opens the plan inside the table panel, and the plan's page image is a
   // storage.googleapis.com signed URL, as in the blueprint widget.
   table: { connectDomains: [], resourceDomains: [GCS_ORIGIN] },
+  // The probe tests both ways a widget can load from the tile host: fetch() (connect-src)
+  // and <img> (img-src, via resourceDomains).
+  probe: { connectDomains: [GCS_ORIGIN], resourceDomains: [GCS_ORIGIN] },
 };
 
 const cache = new Map<string, string>();

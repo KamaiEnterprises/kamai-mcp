@@ -88,7 +88,8 @@ export function KamaiAppWidget() {
   const mode = useDisplayMode();
   const frame = useRef<HTMLIFrameElement>(null);
   const url = data?.url ?? FALLBACK_URL;
-  const src = usePanelSrc(url, Boolean(data?.panel_sign_in));
+  const asLink = data?.open_in === "link";
+  const src = usePanelSrc(url, Boolean(data?.panel_sign_in) && !asLink);
 
   // Layout is keyed on the box we were actually given, not the mode we believe we are
   // in: exiting fullscreen via the host's own control does not reliably notify us, and
@@ -126,7 +127,7 @@ export function KamaiAppWidget() {
   const openIn = data?.open_in ?? null;
   const asked = useRef(false);
   useEffect(() => {
-    if (!openIn || asked.current) return;
+    if (!openIn || asked.current || asLink) return;
     if (openIn !== "inline" && openIn !== "fullscreen" && openIn !== "pip") return;
     asked.current = true;
     void requestDisplayMode(openIn);
@@ -139,7 +140,7 @@ export function KamaiAppWidget() {
   // without structuredContent, which lands here as undefined — data !== null let
   // that arm the refusal timer while the render branch still showed the loader
   // with no iframe mounted at all.
-  const hasData = Boolean(data) && src !== null;
+  const hasData = Boolean(data) && src !== null && !asLink;
   useEffect(() => {
     // No iframe exists until data arrives (the early return below), and in production
     // the delivered url equals FALLBACK_URL, so keying on url alone let the grace
@@ -193,7 +194,7 @@ export function KamaiAppWidget() {
   const [fallbackData, setFallbackData] = useState<unknown>(null);
   const [fallbackFailed, setFallbackFailed] = useState(false);
   useEffect(() => {
-    if (!blocked || fallbackData || fallbackFailed) return;
+    if (!(blocked || asLink) || fallbackData || fallbackFailed) return;
     let cancelled = false;
     void callTool<unknown>("view_projects")
       .then((result) => !cancelled && setFallbackData(result))
@@ -201,9 +202,31 @@ export function KamaiAppWidget() {
     return () => {
       cancelled = true;
     };
-  }, [blocked, fallbackData, fallbackFailed]);
+  }, [blocked, asLink, fallbackData, fallbackFailed]);
 
   if (!data || src === null) return <LoadingState label="Loading Kamai…" />;
+
+  // The host is set to show Kamai as a link (Claude refuses nested frames outright): the
+  // projects list in place, the full app one click away in a browser tab.
+  if (asLink) {
+    return (
+      <>
+        <Card className="mb-3 flex flex-wrap items-center justify-between gap-3 p-4">
+          <p className="text-sm text-base-content/70">The full Kamai app opens in your browser.</p>
+          <OpenKamai href={url} label="Open in Kamai" />
+        </Card>
+        {fallbackData ? (
+          <ProjectsWidget data={fallbackData as never} />
+        ) : fallbackFailed ? (
+          <p className="px-1 text-sm text-base-content/60">
+            {hostCanCallTools() ? "Your projects could not be loaded here." : "This chat cannot load your projects here."} Open Kamai to see them.
+          </p>
+        ) : (
+          <LoadingState label="Loading projects…" />
+        )}
+      </>
+    );
+  }
 
   if (blocked) {
     if (fallbackData) {

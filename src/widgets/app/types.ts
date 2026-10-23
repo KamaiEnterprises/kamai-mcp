@@ -20,6 +20,7 @@ export interface JobSummary {
   progress?: number;
   error_message?: string | null;
   error_code?: string | null;
+  upload_id?: string | null;
 }
 
 export interface ProjectSummary {
@@ -90,6 +91,9 @@ export interface BlueprintData {
   needs_scale?: boolean;
   scale_unconfirmed?: boolean;
   units?: Units;
+  // Clockwise display turn of the page as stored; geometry and image stay unturned.
+  rotation?: number | null;
+  auto_rotation?: number | null;
   // Present only on the model-facing summary a host without structuredContent forwards.
   classes?: { cls: string; count: number }[];
   features_shown?: number;
@@ -140,11 +144,13 @@ export interface UploadTicket {
 
 export interface UploadResult {
   job_id?: string | null;
+  upload_id?: string | null;
   blueprint_id?: string | null;
   project_id: string;
   project_name?: string | null;
   filename?: string | null;
   status?: string | null;
+  app_url?: string | null;
 }
 
 export type IdMap = Record<string, string[]>;

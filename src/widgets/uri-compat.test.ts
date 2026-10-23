@@ -1,6 +1,6 @@
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { buildServer } from "../server.ts";
 import { WIDGET_NAMES, widgetUri } from "./index.ts";
@@ -19,10 +19,11 @@ function textOf(result: { contents: Array<Record<string, unknown>> }): string {
   return text;
 }
 
+// The probe widget is served only with its flag on, so these run with it on.
 async function connect() {
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   const client = new Client({ name: "test", version: "1" }, { capabilities: {} });
-  const server = buildServer({ uid: "test", token: "test" });
+  const server = buildServer({ uid: "test", token: "test" }, {}, { hostProbe: true });
   await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
   return client;
 }
@@ -46,7 +47,7 @@ describe("widget resource URIs", () => {
 
   it("serves the table widget at the current version, with GCS allowed for the plan image", async () => {
     const client = await connect();
-    expect(widgetUri("table")).toBe("ui://kamai/table@v30.html");
+    expect(widgetUri("table")).toBe("ui://kamai/table@v33.html");
     const result = await client.readResource({ uri: widgetUri("table") });
     expect(textOf(result)).toContain("<!doctype html>");
     const meta = result.contents[0]?._meta as { ui?: { csp?: { resourceDomains?: string[] } } } | undefined;
@@ -76,6 +77,10 @@ describe("widget resource URIs", () => {
 });
 
 describe("open_kamai output contract", () => {
+  beforeEach(() =>
+    vi.stubGlobal("fetch", async () =>
+      new Response(JSON.stringify({ uid: "u", app_links: true }), { status: 200, headers: { "content-type": "application/json" } })));
+  afterEach(() => vi.unstubAllGlobals());
   // Probe-era descriptors advertised {url, declared_frame_domains, open_in, chrome,
   // expand_button} — all required, additionalProperties: false — and a stateless
   // server cannot tell a pinned conversation the schema changed. Dropping any of the

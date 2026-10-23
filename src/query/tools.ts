@@ -2,9 +2,9 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 
 import { api, resolveProject } from "../api.ts";
-import { BadArgument, invalidateScanCache } from "../elements.ts";
+import { BadArgument } from "../elements.ts";
 import { looseOutput } from "../loose.ts";
-import { DESTRUCTIVE_IDEMPOTENT, READONLY, text } from "../tool-kit.ts";
+import { DESTRUCTIVE_IDEMPOTENT, READONLY, WRITE_IDEMPOTENT, text } from "../tool-kit.ts";
 import { IDS_PER_RESULT, capIds, compact, fitResult, stripSi } from "./budget.ts";
 import type { ToolContext } from "./context.ts";
 import { HEIGHT_UNITS, type HeightStatement } from "./contract.ts";
@@ -21,7 +21,10 @@ import {
   ORDER_BY_GUIDE,
   ROOM_HEIGHT_GUIDE,
   ROOM_REFS_GUIDE,
+  ROTATION_GUIDE,
   SCALE_GUIDE,
+  RESULT_LINK,
+  SET_ROTATION_DESCRIPTION,
   SET_SCALE_DESCRIPTION,
   WALL_BLUEPRINT_IDS_GUIDE,
   WALL_IN_FOLDER_GUIDE,
@@ -31,10 +34,11 @@ import {
   WALL_SURFACE_DESCRIPTION,
   WINDOW_HEIGHT_GUIDE,
 } from "./descriptions.ts";
-import { REF_RE, filterBody, filterShape, scopeShape, selectionSchema } from "./filters.ts";
+import { REF_RE, ROOM_SCOPE, filterBody, filterShape, scopeShape, selectionSchema } from "./filters.ts";
+import { registerDrawingTextTools } from "./drawing-text.ts";
 import { registerRenderTable } from "./render-table.ts";
-import { countElementsOutput, findElementsOutput, setScaleOutput, wallSurfaceOutput } from "./outputs.ts";
-import { GROUP_KEYS, ORDER_FIELDS } from "./vocabulary.ts";
+import { countElementsOutput, findElementsOutput, setRotationOutput, setScaleOutput, wallSurfaceOutput } from "./outputs.ts";
+import { vocabulary } from "./vocabulary.ts";
 
 
 const NEED_SCOPE = "Pass project_id (list_blueprints lists them) or blueprint_ids.";
@@ -56,14 +60,16 @@ export function registerQueryTools(server: McpServer, ctx: ToolContext): void {
   registerWallSurface(server, ctx);
   registerRenderTable(server, ctx);
   registerSetScale(server, ctx);
+  if (ctx.rotation) registerSetRotation(server, ctx);
+  registerDrawingTextTools(server, ctx);
 }
 
 // ── count_elements ────────────────────────────────────────────────────────────────────
 
-const countInput = z.strictObject({
+const countInput = (v = vocabulary()) => z.strictObject({
   ...scopeShape,
-  ...filterShape,
-  group_by: z.array(z.enum(GROUP_KEYS)).min(1).max(4).optional().describe(GROUP_BY_GUIDE),
+  ...filterShape(v),
+  group_by: z.array(z.enum(v.group_by)).min(1).max(4).optional().describe(GROUP_BY_GUIDE),
   ids_per_group: z.number().int().min(0).max(200).optional().describe(IDS_PER_GROUP_GUIDE),
 });
 
@@ -73,14 +79,14 @@ function registerCountElements(server: McpServer, ctx: ToolContext): void {
     {
       title: "Count elements",
       description: COUNT_ELEMENTS_DESCRIPTION,
-      inputSchema: countInput,
+      inputSchema: countInput(),
       outputSchema: looseOutput(countElementsOutput),
       annotations: READONLY,
     },
     async (args) => {
       try {
         const projectId = await projectFor(ctx, args.project_id, args.blueprint_ids);
-        const body: Record<string, unknown> = { ...filterBody(args) };
+        const body: Record<string, unknown> = { ...filterBody(args), room_scope: ROOM_SCOPE };
         if (args.blueprint_ids) body.blueprint_ids = args.blueprint_ids;
         if (args.group_by) body.group_by = args.group_by;
         if (args.ids_per_group !== undefined) body.ids_per_group = args.ids_per_group;
@@ -111,11 +117,11 @@ function registerCountElements(server: McpServer, ctx: ToolContext): void {
 
 // ── find_elements ─────────────────────────────────────────────────────────────────────
 
-const findInput = z.strictObject({
+const findInput = (v = vocabulary()) => z.strictObject({
   ...scopeShape,
-  ...filterShape,
+  ...filterShape(v),
   order_by: z
-    .array(z.strictObject({ field: z.enum(ORDER_FIELDS), dir: z.enum(["asc", "desc"]).optional() }))
+    .array(z.strictObject({ field: z.enum(v.order_by), dir: z.enum(["asc", "desc"]).optional() }))
     .max(3)
     .optional()
     .describe(ORDER_BY_GUIDE),
@@ -149,14 +155,14 @@ function registerFindElements(server: McpServer, ctx: ToolContext): void {
     {
       title: "Find elements",
       description: FIND_ELEMENTS_DESCRIPTION,
-      inputSchema: findInput,
+      inputSchema: findInput(),
       outputSchema: looseOutput(findElementsOutput),
       annotations: READONLY,
     },
     async (args) => {
       try {
         const projectId = await projectFor(ctx, args.project_id, args.blueprint_ids);
-        const body: Record<string, unknown> = { ...filterBody(args) };
+        const body: Record<string, unknown> = { ...filterBody(args), room_scope: ROOM_SCOPE };
         if (args.blueprint_ids) body.blueprint_ids = args.blueprint_ids;
         if (args.order_by) body.order_by = args.order_by;
         if (args.limit !== undefined) body.limit = args.limit;
@@ -273,7 +279,7 @@ function registerWallSurface(server: McpServer, ctx: ToolContext): void {
         }
         const projectId = await projectFor(ctx, args.project_id, args.blueprint_ids);
 
-        const body: Record<string, unknown> = {};
+        const body: Record<string, unknown> = { room_scope: ROOM_SCOPE };
         if (args.blueprint_ids) body.blueprint_ids = args.blueprint_ids;
         if (args.selection) body.selection = args.selection;
         if (args.room_refs) body.room_refs = args.room_refs;
@@ -318,7 +324,7 @@ function registerSetScale(server: McpServer, ctx: ToolContext): void {
     "set_scale",
     {
       title: "Set a blueprint's scale",
-      description: SET_SCALE_DESCRIPTION,
+      description: SET_SCALE_DESCRIPTION + " " + RESULT_LINK,
       inputSchema: scaleInput,
       outputSchema: looseOutput(setScaleOutput),
       // Rewrites every quantity on the sheet, so hosts should ask first. Setting the
@@ -329,10 +335,40 @@ function registerSetScale(server: McpServer, ctx: ToolContext): void {
       try {
         const projectId = await resolveProject(ctx.principal, blueprint_id, project_id);
         const result = await api.setScale(ctx.principal, projectId, blueprint_id, scale);
-        invalidateScanCache(ctx.scanKey(projectId, blueprint_id));
         return text(result);
       } catch (err) {
         ctx.fail(err, "set_scale");
+      }
+    },
+  );
+}
+
+// ── set_rotation ──────────────────────────────────────────────────────────────────────
+
+const rotationInput = z.strictObject({
+  blueprint_id: z.string().min(1),
+  project_id: z.string().min(1).optional(),
+  rotation: z.union([z.literal(0), z.literal(90), z.literal(180), z.literal(270)]).describe(ROTATION_GUIDE),
+});
+
+function registerSetRotation(server: McpServer, ctx: ToolContext): void {
+  server.registerTool(
+    "set_rotation",
+    {
+      title: "Turn a blueprint's display",
+      description: SET_ROTATION_DESCRIPTION + " " + RESULT_LINK,
+      inputSchema: rotationInput,
+      outputSchema: looseOutput(setRotationOutput),
+      // Display only: no quantity or element changes, and the turn is absolute.
+      annotations: WRITE_IDEMPOTENT,
+    },
+    async ({ blueprint_id, project_id, rotation }) => {
+      try {
+        const projectId = await resolveProject(ctx.principal, blueprint_id, project_id);
+        const result = await api.setRotation(ctx.principal, projectId, blueprint_id, rotation);
+        return text(result);
+      } catch (err) {
+        ctx.fail(err, "set_rotation");
       }
     },
   );

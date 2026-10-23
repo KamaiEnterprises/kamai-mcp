@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { highlightFor, rowElements, type KamaiCall } from "./table-rows";
+import { highlightFor, rowElements, sheetsInOrder, type KamaiCall } from "./table-rows";
 import type { OutlinesPage, RowElements, TableData, TableRow } from "./types";
 
 // Answers each tool by name, and records what it was asked.
@@ -38,12 +38,13 @@ describe("rowElements for a model-authored row that points into a selection", ()
     expect(out.element_ids).toEqual({ bpA: ["d1", "d2", "d3"] });
   });
 
-  it("adds only the ids the model named that the selection does not hold", async () => {
+  it("sends the row's ids for Kamai to merge and shows Kamai's row as it comes", async () => {
     const both: TableRow = { ...fromOnly, element_ids: { bpA: ["d1", "d2", "d3", "w9"] }, element_count: 4 };
-    const { call } = fakeCall({ get_table_row_elements: () => panel });
+    const merged: RowElements = { element_ids: { bpA: ["d1", "d2", "d3", "w9"] }, element_count: 4, element_ids_truncated: false };
+    const { call, calls } = fakeCall({ get_table_row_elements: () => merged });
     const out = await rowElements(call, authoredTable(both), both);
-    expect(out.element_count).toBe(4);
-    expect(out.element_ids.bpA?.sort()).toEqual(["d1", "d2", "d3", "w9"]);
+    expect(calls[0]!.args).toMatchObject({ from: both.from, ids: { bpA: ["d1", "d2", "d3", "w9"] } });
+    expect(out).toEqual(merged);
   });
 
   it("keeps the full fetch's count when it holds more than the row showed", async () => {
@@ -85,5 +86,13 @@ describe("highlightFor", () => {
     const out = await highlightFor(call, "p1", "bpA", ids);
     expect(calls).toHaveLength(2);
     expect(out.missing.sort()).toEqual(["e0", "e400"]);
+  });
+});
+
+describe("sheetsInOrder", () => {
+  it("lists a row's sheets in the project's sheet order, empty ones dropped, unknown ones last", () => {
+    const blueprints = [{ blueprint_id: "a", name: "A-101" }, { blueprint_id: "b", name: "A-102" }, { blueprint_id: "c", name: "A-201" }];
+    const map = { x: ["9"], c: ["1"], a: ["2", "3"], b: [] };
+    expect(sheetsInOrder(map, blueprints).map(([id]) => id)).toEqual(["a", "c", "x"]);
   });
 });

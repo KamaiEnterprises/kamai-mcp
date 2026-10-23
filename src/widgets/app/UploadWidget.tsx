@@ -5,11 +5,14 @@ import { useDropzone } from "react-dropzone";
 import { callTool, updateModelContext } from "./bridge";
 import {
   asArray,
+  belongsToUpload,
   blueprintName,
   isBlueprintReady,
   projectBlueprints,
   projectJobs,
   TERMINAL_BAD,
+  type UploadRef,
+  uploadReference,
 } from "./format";
 import { BlueprintPanel } from "./BlueprintWidget";
 import { ActionError, BrandHeader, Button, Card, LoadingState, StatusBadge } from "./shared";
@@ -52,16 +55,6 @@ function putFile(
   });
 }
 
-function escapedPattern(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
-function belongsToUpload(job: JobSummary, jobId: string | null, filename: string | null): boolean {
-  if (job.id === jobId) return true;
-  if (!filename) return false;
-  return new RegExp(`^\\(\\d+\\) ${escapedPattern(filename)}$`).test(job.filename || "");
-}
-
 function failureReason(job: JobSummary): string {
   if (job.error_code === "page_quota_exceeded") {
     return "Your plan has no pages left. Upgrade in Kamai to process this blueprint.";
@@ -88,7 +81,7 @@ function JobRow({
       <div className="min-w-0 flex-1">
         <div className="flex min-w-0 items-center gap-2">
           <FileText className="h-4 w-4 shrink-0 text-primary" />
-          <span className="truncate text-sm font-medium">{blueprint ? blueprintName(blueprint) : job.filename || job.blueprint_id}</span>
+          <span className="truncate text-sm font-medium">{blueprint ? blueprintName(blueprint) : job.filename || "Upload"}</span>
         </div>
         {failed && <p className="mt-1 pl-6 text-xs text-error">{failureReason(job)}</p>}
       </div>
@@ -111,7 +104,8 @@ export function UploadWidget() {
   const [error, setError] = useState<unknown>(null);
   const [jobs, setJobs] = useState<JobSummary[]>([]);
   const [blueprints, setBlueprints] = useState<BlueprintSummary[]>([]);
-  const [tracked, setTracked] = useState<{ jobId: string | null; filename: string | null } | null>(null);
+  const [tracked, setTracked] = useState<UploadRef | null>(null);
+  const [resultLink, setResultLink] = useState<string | null>(null);
   const [trackingKey, setTrackingKey] = useState(0);
   const [trackingPaused, setTrackingPaused] = useState(false);
   const [opened, setOpened] = useState<BlueprintData | null>(null);
@@ -147,7 +141,7 @@ export function UploadWidget() {
         setJobs(nextJobs);
         setBlueprints(nextBlueprints);
         setProjectName(project.name);
-        const mine = nextJobs.filter((job) => belongsToUpload(job, tracked.jobId, tracked.filename));
+        const mine = nextJobs.filter((job) => belongsToUpload(job, tracked));
         if (mine.length) seen = true;
         if (seen && mine.length && mine.every((job) => job.status.toUpperCase() === "SUCCEEDED" || TERMINAL_BAD.includes(job.status.toUpperCase() as (typeof TERMINAL_BAD)[number]))) {
           const ready = mine.filter((job) => {
@@ -155,9 +149,9 @@ export function UploadWidget() {
             return job.status.toUpperCase() === "SUCCEEDED" && blueprint && isBlueprintReady(blueprint, nextJobs);
           });
           void updateModelContext(
-            ready.length
+            (ready.length
               ? `Blueprint processing finished in ${project.name}. ${ready.length} blueprint(s) are ready.`
-              : `Blueprint processing failed in ${project.name}.`,
+              : `Blueprint processing failed in ${project.name}.`) + uploadReference(resultLink, tracked),
           );
           return;
         }
@@ -178,7 +172,7 @@ export function UploadWidget() {
       active = false;
       window.clearTimeout(timer);
     };
-  }, [projectId, tracked, trackingKey]);
+  }, [projectId, tracked, trackingKey, resultLink]);
 
   const upload = async (file: File) => {
     setError(null);
@@ -206,7 +200,10 @@ export function UploadWidget() {
       setProjectId(result.project_id || ticket.project_id);
       setProjectName(result.project_name || ticket.project_name || projectName);
       setTrackingPaused(false);
-      setTracked({ jobId: result.job_id ?? null, filename: file.name });
+      const upload = { jobId: result.job_id ?? null, uploadId: result.upload_id ?? null };
+      setResultLink(result.app_url ?? null);
+      // With neither id there is nothing to follow; polling would only run out the clock.
+      setTracked(upload.jobId || upload.uploadId ? upload : null);
       setJobs([{
         id: result.job_id || `queued-${Date.now()}`,
         blueprint_id: result.blueprint_id || "",
@@ -238,7 +235,7 @@ export function UploadWidget() {
 
   const visibleJobs = useMemo(() => {
     if (!tracked) return jobs;
-    const mine = jobs.filter((job) => belongsToUpload(job, tracked.jobId, tracked.filename));
+    const mine = jobs.filter((job) => belongsToUpload(job, tracked));
     return mine.length ? mine : jobs;
   }, [jobs, tracked]);
 

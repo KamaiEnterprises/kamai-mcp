@@ -3,7 +3,7 @@ import { Map } from "lucide-react";
 
 import { callTool } from "./bridge";
 import { BlueprintPanel } from "./BlueprintWidget";
-import { ActionError, BrandHeader, Button, LoadingState } from "./shared";
+import { ActionError, BrandHeader, Button, LoadingState, OpenKamai, blueprintUrl } from "./shared";
 import { TakeoffPanel } from "./TakeoffPanel";
 import type { BlueprintData, TakeoffData } from "./types";
 import { useWidgetData } from "./useWidgetData";
@@ -44,7 +44,12 @@ export function TakeoffWidget() {
       <BrandHeader
         title={data.name || "Takeoff"}
         subtitle={subtitle}
-        actions={<Button variant="outline" size="xs" icon={Map} loading={loading} onClick={openPlan}>View plan</Button>}
+        actions={
+          <>
+            <Button variant="outline" size="xs" icon={Map} loading={loading} onClick={openPlan}>View plan</Button>
+            {data.project_id && <OpenKamai href={blueprintUrl(data.project_id, data.blueprint_id)} label="Open in Kamai" variant="ghost" size="xs" />}
+          </>
+        }
       />
       <ActionError error={error} className="mb-3" />
       <TakeoffPanel data={data} />

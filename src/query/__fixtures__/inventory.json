@@ -160,7 +160,7 @@
       "units": "metric",
       "words": null,
       "classes": null,
-      "note": "Never processed: what this blueprint contains is unknown, not empty. Counts leave it out (excluded as not_indexed); never report it as having nothing on it."
+      "note": "Never processed: what this blueprint contains is unknown, not empty. Counts leave it out (excluded as not_indexed)."
     },
     {
       "blueprint_id": "bpEval_unscaled",

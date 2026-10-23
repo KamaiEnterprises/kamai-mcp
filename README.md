@@ -33,13 +33,20 @@ With `KAMAI_QUERY_TOOLS=on` (see below):
 | `calculate_wall_surface_area` | Net wall (paint or plaster) area of rooms |
 | `render_table` | A table panel whose rows highlight their elements on the plan |
 | `set_scale` | Set a blueprint's drawing scale |
+| `set_rotation` | Turn how a blueprint is shown (display only) |
+
+With `KAMAI_HOST_PROBE` on (the default on dev and debug, off in prod; see below):
+
+| Tool | What it does |
+|---|---|
+| `probe_host` | A diagnostic panel that tests what widgets can use in this chat (WebGPU, WebGL2, workers, WebAssembly, the GCS tile host) and logs the result as a `widget_probe` event |
 
 `list_blueprints` also takes `include_inventory` (with a `project_id`): what each
 blueprint contains.
 
 `list_projects`, `get_project`, `get_blueprint`, `request_blueprint_upload`,
 `finalize_blueprint_upload`, and with the query tools `get_table_row_elements` and
-`get_element_outlines`, are app-only: callable by the widgets, not advertised to the
+`get_element_outlines`, and with the probe `report_host_probe`, are app-only: callable by the widgets, not advertised to the
 model.
 
 ## Run locally with your API key
@@ -86,8 +93,10 @@ starting, or every request will be refused with `invalid_token`.
 | `MCP_ACCEPTED_AUDIENCES` | Optional comma-separated audiences, for a cutover. Defaults to `MCP_API_BASE_URL` |
 | `KAMAI_API_KEY` | Local mode only: the personal API key the tools run as |
 | `KAMAI_APP_ORIGINS` | Optional comma-separated extra origins `open_kamai` may frame; the first becomes the default |
-| `KAMAI_QUERY_TOOLS` | `on` registers the query tools. `https://mcp-api.kamai.io` serves them; leave it off against an API that answers `/v1/vocabulary` with 404 |
-| `KAMAI_MCP_NO_INSTRUCTIONS` | `1` leaves the server instructions out, as claude.ai does, to test the tool descriptions on their own |
+| `KAMAI_QUERY_TOOLS` | `on` registers the query tools. Only once the API layer serves `/v1/vocabulary` (401, not 404) |
+| `KAMAI_ROTATION` | `off` drops `set_rotation` from the query tools (on by default; needs an API layer that serves `PUT .../blueprints/{id}/rotation`) |
+| `KAMAI_HOST_PROBE` | `on` or `off` registers `probe_host` and `report_host_probe`. Unset, it is on when Cloud Run's `K_SERVICE` starts with `dev-` or `debug-`, off otherwise. Never in local mode |
+| `KAMAI_MCP_NO_INSTRUCTIONS` | `1` leaves the server instructions out, as claude.ai does; for evals |
 
 The MCP API and the authorization server are operated by Kamai, so running the
 HTTP server end to end needs access to both. An MCP server is only really testable

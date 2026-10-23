@@ -1,16 +1,8 @@
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
-import {
-  GEOMETRY_PAGE_MAX,
-  RESULT_BUDGET,
-  SCAN_CACHE_TTL_MS,
-  buildElementsPage,
-  clearScanCache,
-  invalidateScanCache,
-  type FetchGeometry,
-} from "./elements.ts";
+import { GEOMETRY_PAGE_MAX, RESULT_BUDGET, buildElementsPage, type FetchGeometry, type GeometryFilter } from "./elements.ts";
 import type { GeometryFeature, GeometryPage } from "./api.ts";
 import { buildServer } from "./server.ts";
 
@@ -38,14 +30,44 @@ function feature(i: number, over: Partial<GeometryFeature> = {}): GeometryFeatur
 
 // Emulates the real route: it slices the raw collection by an offset cursor, drops the
 // coordinate-less rows from `features`, and computes truncated/next_cursor from the
-// number of raw rows taken — not from the number of features handed back.
+// number of raw rows taken — not from the number of features handed back. With a filter
+// it does what the API layer does: trimmed, case-insensitive contains
+// over every feature, `matched`, and a cursor into the matches tagged with the filter.
 function sheet(
   rows: Array<GeometryFeature | null>,
   over: Partial<GeometryPage> = {},
-): FetchGeometry & { calls: Array<{ limit: number; cursor?: string }> } {
-  const calls: Array<{ limit: number; cursor?: string }> = [];
-  const fetchPage = async (limit: number, cursor?: string): Promise<GeometryPage> => {
-    calls.push({ limit, cursor });
+): FetchGeometry & { calls: Array<{ limit: number; cursor?: string; filter?: GeometryFilter }> } {
+  const calls: Array<{ limit: number; cursor?: string; filter?: GeometryFilter }> = [];
+  const fetchPage = async (limit: number, cursor?: string, filter?: GeometryFilter): Promise<GeometryPage> => {
+    calls.push({ limit, cursor, filter });
+    const base = {
+      blueprint_id: "bp1",
+      name: "Level 2",
+      project_id: "pr1",
+      project_name: "Tower",
+      state: "ready" as const,
+      grid: 2000,
+      image: { url: "https://example/x.png", w: 100, h: 50 },
+      total: rows.length,
+      scale_label: "1:100",
+      needs_scale: false,
+      scale_unconfirmed: false,
+      units: { area: "m²", length: "m" },
+    };
+    if (filter) {
+      const needles = Object.entries(filter).map(([k, v]) => [k, v!.trim().toLowerCase()] as const);
+      const key = JSON.stringify(needles.sort());
+      const matches = rows.filter(
+        (r): r is GeometryFeature =>
+          r !== null && needles.every(([k, n]) => String(r[k as keyof GeometryFeature] ?? "").toLowerCase().includes(n)),
+      );
+      if (cursor && !cursor.startsWith(`m${key}:`)) throw new Error("cursor from another filter");
+      const offset = cursor ? Number(cursor.split(":").at(-1)) : 0;
+      const features = matches.slice(offset, offset + limit);
+      const more = offset + features.length < matches.length;
+      return { ...base, features, matched: matches.length, truncated: more,
+        next_cursor: more ? `m${key}:${offset + features.length}` : null, ...over };
+    }
     const offset = cursor ? Number(cursor) : 0;
     const window = rows.slice(offset, offset + limit);
     const taken = window.length;
@@ -138,39 +160,38 @@ describe("list_elements filters", () => {
     expect(page.truncated).toBe(false);
   });
 
-  it("reads every page of the blueprint before it reports a match count", async () => {
-    // The geometry endpoint has no class filter, so a filter that only looked at the
-    // first page would report "3 doors" on a blueprint holding 30.
-    const rows = Array.from({ length: 4200 }, (_, i) =>
-      feature(i, { cls: i % 2 === 0 ? "door" : "room" }),
-    );
+  it("asks Kamai to filter the whole sheet in one call and relays its count", async () => {
+    const rows = Array.from({ length: 4200 }, (_, i) => feature(i, { cls: i % 2 === 0 ? "door" : "room" }));
     const fetcher = sheet(rows);
-    const page = await buildElementsPage(fetcher, { cls: "door", limit: 5 });
-    expect(fetcher.calls.length).toBeGreaterThan(1);
-    expect(page.filter_complete).toBe(true);
+    const page = await buildElementsPage(fetcher, { cls: "door", folder: "group", limit: 5 });
+    expect(fetcher.calls).toEqual([{ limit: 5, cursor: undefined, filter: { cls: "door", folder: "group" } }]);
     expect(page.matched).toBe(2100);
+    expect(page.filter_complete).toBe(true);
     expect(page.filter_scanned).toBe(4200);
+    expect(notes(page)).not.toMatch(/floor/i);
   });
 
-  it("never claims a client-side filter saw rows it never read", async () => {
-    const rows = Array.from({ length: 40_000 }, (_, i) => feature(i, { cls: "door" }));
-    const page = await buildElementsPage(sheet(rows), { cls: "door", limit: 5 });
-    expect(page.filter_complete).toBe(false);
-    expect(page.truncated).toBe(true);
-    expect(page.filter_scanned).toBeLessThan(page.total);
-    expect(notes(page)).toMatch(/never checked|not checked|floor/i);
+  it("reports no match count while the blueprint is not ready", async () => {
+    const processing = sheet([], { state: "processing", matched: null });
+    const page = await buildElementsPage(processing, { cls: "door" });
+    expect(page.matched).toBeNull();
+    expect(notes(page)).toMatch(/still being processed/);
   });
 
-  it("pages the matches with a cursor of its own", async () => {
+  it("never presents an unfiltered page as the matches", async () => {
+    // A route without the filter ignores the arguments and answers the whole sheet.
+    const unfiltering: FetchGeometry = (limit, cursor) => sheet([feature(0, { cls: "room" })])(limit, cursor);
+    await expect(buildElementsPage(unfiltering, { cls: "door" })).rejects.toThrow(/filter/i);
+  });
+
+  it("pages the matches with the route's cursor", async () => {
     const rows = Array.from({ length: 6 }, (_, i) =>
       feature(i, { cls: i < 4 ? "door" : "room" }),
     );
     const first = await buildElementsPage(sheet(rows), { cls: "door", limit: 2 });
     expect(first.matched).toBe(4);
     expect(first.truncated).toBe(true);
-    // Still an offset of 2 into the matches, now carrying the fingerprint of the filter
-    // that produced it so it cannot be replayed against a different one.
-    expect(first.next_cursor).toMatch(/^m:[0-9a-f]{8}:2$/);
+    expect(first.next_cursor).toMatch(/:2$/);
     const second = await buildElementsPage(sheet(rows), {
       cls: "door",
       limit: 2,
@@ -181,15 +202,6 @@ describe("list_elements filters", () => {
     expect(second.next_cursor).toBeNull();
   });
 
-  it("refuses a cursor that belongs to the other listing", async () => {
-    const rows = [feature(0)];
-    // A filtered cursor counts matches; an unfiltered one counts rows. Silently
-    // swapping them would page into the wrong place and look like a valid answer.
-    await expect(buildElementsPage(sheet(rows), { cursor: "m:2" })).rejects.toThrow(/filter/i);
-    await expect(
-      buildElementsPage(sheet(rows), { cls: "door", cursor: "40" }),
-    ).rejects.toThrow(/filter/i);
-  });
 });
 
 describe("list_elements payload", () => {
@@ -332,6 +344,29 @@ describe("the list_elements tool", () => {
     expect(JSON.stringify(result.content)).toContain("still being processed");
   });
 
+  it("sends the filter to Kamai and passes its fix message through", async () => {
+    const seen: string[] = [];
+    vi.stubGlobal("fetch", async (url: URL) => {
+      seen.push(String(url));
+      return new Response(
+        JSON.stringify({ code: "invalid_request", detail: "That cursor was made by a listing with different cls/folder/name filters." }),
+        { status: 400, headers: { "content-type": "application/problem+json" } },
+      );
+    });
+    const client = await connect();
+    const result = await client.callTool({
+      name: "list_elements",
+      arguments: { blueprint_id: "bp1", project_id: "pr1", cls: "door", name: "front", cursor: "mabc:2" },
+    });
+    const url = new URL(seen.at(-1)!);
+    expect(url.searchParams.get("cls")).toBe("door");
+    expect(url.searchParams.get("name")).toBe("front");
+    expect(url.searchParams.get("folder")).toBeNull();
+    expect(url.searchParams.get("cursor")).toBe("mabc:2");
+    expect(result.isError).toBe(true);
+    expect(JSON.stringify(result.content)).toContain("different cls/folder/name filters");
+  });
+
   // The size that matters is the one the host measures, and that is not the page: text()
   // sends the payload twice, JSON-escaped in content[0].text and again as
   // structuredContent, so the tool result is about twice what the page weighs. Sizing the
@@ -410,128 +445,6 @@ describe("the list_elements tool", () => {
   });
 });
 
-describe("list_elements cursors are bound to their filter", () => {
-  const doorsAndWindows = () =>
-    Array.from({ length: 10 }, (_, i) =>
-      feature(i, {
-        cls: i % 2 === 0 ? "door" : "window",
-        folder: i < 4 ? "Apartment 5" : "Apartment 6",
-      }),
-    );
-
-  it("refuses a cursor minted under a different filter rather than paging into it", async () => {
-    // Reported case A: the model pages `cls=door`, the user says "just Apartment 5", and
-    // the model re-calls with the narrower filter AND the old cursor. The old cursor's
-    // offset is past the end of the new match set, so every match is skipped and the
-    // answer comes back complete, caveat-free and empty.
-    const rows = Array.from({ length: 40 }, (_, i) =>
-      feature(i, { cls: "door", folder: i < 5 ? "Apartment 5" : "Apartment 6" }),
-    );
-    const first = await buildElementsPage(sheet(rows), { cls: "door", limit: 10 });
-    expect(first.next_cursor).not.toBeNull();
-    await expect(
-      buildElementsPage(sheet(rows), {
-        cls: "door",
-        folder: "Apartment 5",
-        cursor: first.next_cursor!,
-      }),
-    ).rejects.toThrow(/filter/i);
-  });
-
-  it("refuses a cursor replayed against a different class", async () => {
-    // Reported case B: a cursor minted by `cls=door` replayed with `cls=window` skips the
-    // first two windows and presents three of five as the whole filtered set.
-    const rows = doorsAndWindows();
-    const first = await buildElementsPage(sheet(rows), { cls: "door", limit: 2 });
-    await expect(
-      buildElementsPage(sheet(rows), { cls: "window", cursor: first.next_cursor! }),
-    ).rejects.toThrow(/filter/i);
-  });
-
-  it("accepts its own cursor back with the same filters, in any spelling", async () => {
-    const rows = doorsAndWindows();
-    const first = await buildElementsPage(sheet(rows), { cls: "door", limit: 2 });
-    const second = await buildElementsPage(sheet(rows), {
-      cls: " DOOR ",
-      limit: 2,
-      cursor: first.next_cursor!,
-    });
-    expect(second.elements.map((e) => e.i)).toEqual([4, 6]);
-  });
-
-  it("refuses a cursor whose offset is past the end of the match set", async () => {
-    const rows = doorsAndWindows();
-    const first = await buildElementsPage(sheet(rows), { cls: "door", limit: 2 });
-    const forged = first.next_cursor!.replace(/\d+$/, "999");
-    await expect(buildElementsPage(sheet(rows), { cls: "door", cursor: forged })).rejects.toThrow(
-      /cursor/i,
-    );
-  });
-
-  it("refuses an offset that is not a plain decimal count", async () => {
-    const rows = doorsAndWindows();
-    const first = await buildElementsPage(sheet(rows), { cls: "door", limit: 2 });
-    for (const bad of ["0x10", " 5", "1e3", "-1", "2.5", ""]) {
-      await expect(
-        buildElementsPage(sheet(rows), {
-          cls: "door",
-          cursor: first.next_cursor!.replace(/[^:]*$/, bad),
-        }),
-      ).rejects.toThrow(/cursor/i);
-    }
-  });
-});
-
-describe("list_elements never reports an unread tail as a complete answer", () => {
-  it("stays truncated when every match found was returned but rows went unread", async () => {
-    // The tail term in `truncated` is the only thing standing between a 40,000-row sheet
-    // and "there are 3 doors" — the matches all fit on one page, so nothing else in the
-    // response says the other 30,000 rows were never looked at.
-    const rows = Array.from({ length: 12_000 }, (_, i) =>
-      feature(i, { cls: i < 3 ? "door" : "room" }),
-    );
-    const page = await buildElementsPage(sheet(rows), { cls: "door", limit: 50 });
-    expect(page.matched).toBe(3);
-    expect(page.returned).toBe(3);
-    expect(page.next_cursor).toBeNull();
-    expect(page.filter_complete).toBe(false);
-    expect(page.truncated).toBe(true);
-    expect(notes(page)).toMatch(/partial list/i);
-  });
-
-  it("does not call an unreachable tail a complete scan", async () => {
-    // truncated true with no cursor is "there is more and you cannot reach it". Reading
-    // that as "there is no more" turns a 60%-unread sheet into a confident total.
-    const rows = Array.from({ length: 3000 }, (_, i) => feature(i));
-    const stuck = sheet(rows, { truncated: true, next_cursor: null });
-    const page = await buildElementsPage(stuck, { cls: "shape" });
-    expect(page.matched).toBe(0);
-    expect(page.filter_scanned).toBe(2000);
-    expect(page.filter_complete).toBe(false);
-    expect(page.truncated).toBe(true);
-    expect(notes(page)).toMatch(/never checked|not checked|floor/i);
-  });
-
-  it("counts the rows the response says it read, not the rows it asked for", async () => {
-    // A route that clamps the page size to less than SCAN_PAGE must not be reported as
-    // having read SCAN_PAGE rows.
-    const rows = Array.from({ length: 3000 }, (_, i) => feature(i));
-    const clamped: FetchGeometry = (limit, cursor) => sheet(rows)(Math.min(limit, 400), cursor);
-    const page = await buildElementsPage(clamped, { cls: "shape" });
-    expect(page.filter_scanned).toBe(2000);
-    expect(page.filter_complete).toBe(false);
-  });
-});
-
-describe("list_elements filter arguments", () => {
-  it("refuses a filter that is only whitespace instead of scanning the sheet for it", async () => {
-    const rows = Array.from({ length: 2200 }, (_, i) => feature(i));
-    const fetcher = sheet(rows);
-    await expect(buildElementsPage(fetcher, { folder: "   " })).rejects.toThrow(/folder/i);
-    expect(fetcher.calls.length).toBe(0);
-  });
-});
-
 // A traced wall or room outline, quantised but never simplified, so ring length is
 // whatever tracing produced.
 function heavy(i: number, points: number, over: Partial<GeometryFeature> = {}): GeometryFeature {
@@ -583,7 +496,7 @@ describe("list_elements holds the whole tool result under the host's ceiling", (
     expect(first.matched).toBe(12);
     expect(first.returned).toBeLessThan(12);
     expect(first.truncated).toBe(true);
-    expect(first.next_cursor).toMatch(new RegExp(`^m:[0-9a-f]{8}:${first.returned}$`));
+    expect(first.next_cursor).toMatch(new RegExp(`:${first.returned}$`));
     const second = await buildElementsPage(sheet(rows), {
       cls: "wall",
       limit: 12,
@@ -596,66 +509,5 @@ describe("list_elements holds the whole tool result under the host's ceiling", (
     const page = await buildElementsPage(sheet([heavy(0, 40_000)]), { limit: 1 });
     expect(page.returned).toBe(1);
     expect(notes(page)).toMatch(/larger than the result-size budget/i);
-  });
-});
-
-describe("list_elements reads the blueprint once per filtered listing", () => {
-  const scope = "uid|token|pr1|bp1";
-  beforeEach(() => clearScanCache());
-  afterEach(() => clearScanCache());
-
-  it("pages through the matches without re-reading the sheet", async () => {
-    // The route assembles the whole feature collection before it slices, so every scan
-    // page is a full assembly. Paging a filtered listing must not buy them again.
-    const rows = Array.from({ length: 4200 }, (_, i) => feature(i, { cls: "door" }));
-    const fetcher = sheet(rows);
-    const first = await buildElementsPage(fetcher, { cls: "door", limit: 50 }, scope);
-    const reads = fetcher.calls.length;
-    expect(reads).toBe(3);
-    const second = await buildElementsPage(
-      fetcher,
-      { cls: "door", limit: 50, cursor: first.next_cursor! },
-      scope,
-    );
-    expect(fetcher.calls.length).toBe(reads);
-    expect(second.elements[0]?.i).toBe(50);
-    expect(second.matched).toBe(4200);
-  });
-
-  it("never serves one caller's blueprint to another", async () => {
-    const mine = sheet([feature(0, { cls: "door", name: "My door" })]);
-    const yours = sheet([feature(9, { cls: "door", name: "Your door" })]);
-    await buildElementsPage(mine, { cls: "door" }, "uid-a|token-a|pr1|bp1");
-    const theirs = await buildElementsPage(yours, { cls: "door" }, "uid-b|token-b|pr1|bp1");
-    expect(yours.calls.length).toBe(1);
-    expect(theirs.elements[0]?.name).toBe("Your door");
-  });
-
-  it("re-reads once the copy is older than its minute", async () => {
-    const rows = [feature(0, { cls: "door" })];
-    const fetcher = sheet(rows);
-    const now = Date.now();
-    const clock = vi.spyOn(Date, "now");
-    clock.mockReturnValue(now);
-    await buildElementsPage(fetcher, { cls: "door" }, scope);
-    clock.mockReturnValue(now + SCAN_CACHE_TTL_MS + 1);
-    await buildElementsPage(fetcher, { cls: "door" }, scope);
-    expect(fetcher.calls.length).toBe(2);
-    clock.mockRestore();
-  });
-
-  it("reads live when the caller gives it no scope to key on", async () => {
-    const fetcher = sheet([feature(0, { cls: "door" })]);
-    await buildElementsPage(fetcher, { cls: "door" });
-    await buildElementsPage(fetcher, { cls: "door" });
-    expect(fetcher.calls.length).toBe(2);
-  });
-
-  it("re-reads after a legend write drops the copy", async () => {
-    const fetcher = sheet([feature(0, { cls: "door" })]);
-    await buildElementsPage(fetcher, { cls: "door" }, scope);
-    invalidateScanCache(scope);
-    await buildElementsPage(fetcher, { cls: "door" }, scope);
-    expect(fetcher.calls.length).toBe(2);
   });
 });

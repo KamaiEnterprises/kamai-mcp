@@ -2,6 +2,9 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import baseline from "./__fixtures__/tools-v27.json" with { type: "json" };
 import { connect, stubApi, structured } from "./testing/harness.ts";
+import { RESULT_LINK } from "./query/descriptions.ts";
+
+const LINKED = new Set(["update_elements", "create_folder", "move_elements", "create_project", "update_project", "cancel_job", "finalize_blueprint_upload"]);
 
 // Deploy safety. With KAMAI_QUERY_TOOLS unset this server must advertise exactly today's
 // tools plus list_blueprints, and no existing tool's structuredContent may gain or lose a
@@ -55,8 +58,8 @@ const isAppOnly = (tool: Tool) => {
   return Array.isArray(visibility) && visibility.length === 1 && visibility[0] === "app";
 };
 
-async function listTools(queryTools: boolean, chatgpt = false): Promise<Tool[]> {
-  const client = await connect({ queryTools }, { chatgpt });
+async function listTools(queryTools: boolean, chatgpt = false, printedTables = true): Promise<Tool[]> {
+  const client = await connect({ queryTools, printedTables }, { chatgpt });
   return (await client.listTools()).tools as Tool[];
 }
 
@@ -159,7 +162,8 @@ describe("tool list, query tools off", () => {
 
   // Recorded from the v27 tool list, before list_blueprints and the query tools, with
   // {chatgpt: true}. Only set_opening_height changes its words and inputs (the height
-  // quote); the widget URIs carry the version.
+  // quote), and list_elements its words (Kamai filters the whole sheet); the widget URIs
+  // carry the version.
   it("leaves every other tool's words, inputs and widget binding as they were", async () => {
     const now = Object.fromEntries((await listTools(false, true)).map((t) => [t.name, t]));
     const unversioned = (meta: unknown) => JSON.stringify(meta ?? null).replace(/@v\d+/g, "@v*");
@@ -169,8 +173,19 @@ describe("tool list, query tools off", () => {
       expect(after.title, name).toBe(before.title);
       expect(unversioned(after._meta), name).toBe(unversioned(before._meta));
       if (name === "set_opening_height") continue;
-      expect(after.description, name).toBe(before.description);
-      expect(after.inputSchema, name).toEqual(before.inputSchema);
+      // An action tool's words end with the result-link rule, nothing else changes.
+      const link = LINKED.has(name) ? ` ${RESULT_LINK}` : "";
+      if (name === "list_jobs") expect(after.description, name).toMatch(/pass its `upload_id` to cancel_job/);
+      else if (name === "cancel_job") expect(after.description, name).toBe(`${before.description} Cancelling a page job cancels every page of its upload that is still pending or running. \`job_id\` may also be an \`upload_id\` (from finalize_blueprint_upload or list_jobs): that cancels the whole upload, and works from its first seconds, so prefer it when the user wants to stop an upload.${link}`);
+      else if (name === "download_plan") expect(after.description, name).toMatch(/named "Open in Kamai"/);
+      else if (name !== "list_elements") expect(after.description, name).toBe(`${before.description}${link}`);
+      if (name === "list_jobs") {
+        // Paged: the same project_id, plus an optional limit and offset.
+        const props = (after.inputSchema as { properties: Record<string, unknown>; required?: string[] });
+        expect(props.properties.project_id).toEqual((before.inputSchema as typeof props).properties.project_id);
+        expect(Object.keys(props.properties).sort()).toEqual(["limit", "offset", "project_id"]);
+        expect(props.required).toEqual(["project_id"]);
+      } else expect(after.inputSchema, name).toEqual(before.inputSchema);
     }
   });
 
@@ -205,6 +220,7 @@ const geometry = {
   text: null,
   text_total: null,
   text_next_cursor: null,
+  classes: [{ cls: "room", count: 1 }],
 };
 const takeoff = {
   blueprint_id: "bp1",
@@ -249,12 +265,16 @@ describe("structuredContent of existing tools", () => {
 
   it("has exactly the keys it had before", async () => {
     stubApi({
+      "GET /v1/me": { body: { uid: "test", app_links: true } },
       "GET /v1/projects": { body: { items: [project], next_cursor: null } },
       "GET /v1/projects/p1/blueprints/bp1/geometry": { body: geometry },
       "GET /v1/projects/p1/blueprints/bp1/takeoff": { body: takeoff },
       "GET /v1/projects/p1/jobs": { body: [job] },
-      "PATCH /v1/blueprints/bp1/features/op": {
-        body: { id: "op", tag: "door", height_units: null, height_m: null, feature_class: "wall_surface_with_opening" },
+      "POST /v1/projects/p1/blueprints/bp1/opening-pieces": {
+        body: {
+          applied: true, changed: 1, fields: ["tag"], refused: [],
+          written: [{ id: "op", tag: "door", height_units: null, height_m: null, feature_class: "wall_surface_with_opening" }],
+        },
       },
     });
     const client = await connect({ queryTools: false });
@@ -275,26 +295,44 @@ describe("structuredContent of existing tools", () => {
 
 // ── query tools on ───────────────────────────────────────────────────────────────────
 
-const QUERY_VISIBLE = ["count_elements", "find_elements", "calculate_wall_surface_area", "render_table", "set_scale", "export"];
+const QUERY_VISIBLE = [
+  "count_elements",
+  "find_elements",
+  "calculate_wall_surface_area",
+  "render_table",
+  "set_scale",
+  "export",
+  "get_sheet_text",
+  "set_rotation",
+];
 const QUERY_APP_ONLY = ["get_table_row_elements", "get_element_outlines"];
+const BUDGET = 33;
 
 describe("tool list, query tools on", () => {
-  it("adds the query tools: 24 visible, 31 in all", async () => {
-    const tools = await listTools(true);
+  it("adds the query tools: 26 visible, 33 in all (get_printed_tables off)", async () => {
+    const tools = await listTools(true, false, false);
     expect(tools.map((t) => t.name).sort()).toEqual(
       [...TODAY, "list_blueprints", ...QUERY_VISIBLE, ...QUERY_APP_ONLY].sort(),
     );
-    expect(tools.filter((t) => !isAppOnly(t))).toHaveLength(24);
+    expect(tools.filter((t) => !isAppOnly(t))).toHaveLength(26);
     expect(tools.filter(isAppOnly).map((t) => t.name).sort()).toEqual([...APP_ONLY_TODAY, ...QUERY_APP_ONLY].sort());
   });
 
   // Our own budget, not a host limit: Anthropic says tool choice degrades past 30-50 tools,
   // OpenAI suggests under 20 at the start of a turn, Cursor warns past 40 across all servers.
-  // Raising it is a product decision, not a test fix.
-  it("stays at or under 25 visible tools, ChatGPT included", async () => {
-    const tools = await listTools(true, true);
-    expect(tools.filter((t) => !isAppOnly(t))).toHaveLength(25);
-    expect(tools.filter((t) => !isAppOnly(t)).length).toBeLessThanOrEqual(25);
+  // Raising it is a product decision, not a test fix: 25 → 27 for get_sheet_text and
+  // get_printed_tables; counted with the markup tools and set_rotation since, which
+  // supersedes the 27.
+  it("adds get_printed_tables only with KAMAI_PRINTED_TABLES", async () => {
+    expect((await listTools(true, false, true)).map((t) => t.name)).toContain("get_printed_tables");
+    expect((await listTools(true, false, false)).map((t) => t.name)).not.toContain("get_printed_tables");
+  });
+
+  it("stays at or under BUDGET visible tools, ChatGPT, get_printed_tables, markups and set_rotation included", async () => {
+    const client = await connect({ queryTools: true, printedTables: true, markups: true, rotation: true }, { chatgpt: true });
+    const tools = (await client.listTools()).tools as Tool[];
+    expect(tools.filter((t) => !isAppOnly(t))).toHaveLength(BUDGET);
+    expect(tools.filter((t) => !isAppOnly(t)).length).toBeLessThanOrEqual(BUDGET);
   });
 
   it("gives every tool a title and all four hints", async () => {
@@ -423,6 +461,15 @@ describe("tool list, query tools on", () => {
     expect(tools.update_elements!.description).not.toMatch(/handing/i);
   });
 
+  // KAMAI_ROTATION is outside the budget above until it is turned on: one more visible tool.
+  it("keeps set_rotation's words free of figures and its hints complete", async () => {
+    const client = await connect({ queryTools: true, rotation: true });
+    const tools = (await client.listTools()).tools as Tool[];
+    expect(tools.filter((t) => !isAppOnly(t))).toHaveLength(26);
+    assertNoFigures(tools);
+    assertHintsAndTitles(tools);
+  });
+
   it("marks set_scale destructive, so hosts ask before it rewrites a sheet", async () => {
     const tool = (await listTools(true)).find((t) => t.name === "set_scale")!;
     expect(tool.annotations).toMatchObject({ readOnlyHint: false, destructiveHint: true, idempotentHint: true });
@@ -448,10 +495,20 @@ describe("server instructions", () => {
     return client.getInstructions();
   };
 
-  it("keeps today's text with the query tools off", async () => {
+  it("keeps today's text with the query tools off, plus the result-link rule", async () => {
     expect(await instructionsOf({ queryTools: false })).toBe(
-      "Tools for managing Kamai construction-blueprint projects, blueprints, and takeoffs.",
+      "Tools for managing Kamai construction-blueprint projects, blueprints, and takeoffs. After an action (create, " +
+        'update, move, cancel, upload, download), give its `app_url` as a link named "Open in Kamai", never as a bare ' +
+        "URL; ids are for tool calls, never shown to the user unless they ask.",
     );
+  });
+
+  it("names the result link and the export rule with the query tools on", async () => {
+    const text = await instructionsOf({ queryTools: true });
+    expect(text).toContain('give its `app_url` as a link named "Open in Kamai"');
+    expect(text).toContain("only with export or download_plan, never by writing one yourself");
+    // No ids in chat replies; the instructions never ask for them.
+    expect(text).not.toMatch(/reference ids/);
   });
 
   it("teaches the query tools when they are on", async () => {

@@ -46,6 +46,7 @@ export const findRowSchema = z.looseObject({
   folder_path: z.string().nullish(),
   blueprint_discipline: z.string().nullish(),
   is_user_drawn: z.boolean().nullish(),
+  counted_only: z.boolean().nullish(),
   needs_scale: z.boolean().nullish(),
   area: display,
   perimeter: display,
@@ -87,6 +88,13 @@ export const aggregateGroupSchema = z.looseObject({
   text_ids_truncated: z.boolean().nullish(),
 });
 
+// What a total leaves out although a group lists it (wall surfaces beside their walls).
+export const notAdded = z.looseObject({
+  count: z.number(),
+  length: z.string().nullish(),
+  classes: z.array(z.string()),
+});
+
 export const aggregateResultSchema = z.looseObject({
   project_id: z.string(),
   project_name: z.string().nullish(),
@@ -102,6 +110,8 @@ export const aggregateResultSchema = z.looseObject({
     count_is_partial: z.boolean(),
     area_is_partial: z.boolean().nullish(),
     units_conflict: z.string().nullish(),
+    sum_note: z.string().nullish(),
+    not_added: notAdded.nullish(),
   }),
   excluded: z.array(excluded),
   total_is_partial: z.boolean(),
@@ -254,6 +264,24 @@ export const scaleResultSchema = z.looseObject({
   stored_heights_reinterpreted: z.number(),
   needs_scale: z.boolean(),
   scale_unconfirmed: z.boolean(),
+  project_id: z.string().nullish(),
+  // The page of this result in the Kamai web app (the API layer builds it).
+  app_url: z.string().nullish(),
+  reference_ids: z.record(z.string(), z.string()).nullish(),
+});
+
+// Numbers, not the four literals: a decode that fails after the PUT has landed reports an
+// error for a turn that was made (the set_scale lesson above).
+export const rotationResultSchema = z.looseObject({
+  blueprint_id: z.string(),
+  name: z.string().nullish(),
+  previous: z.number().nullish(),
+  rotation: z.number(),
+  auto_rotation: z.number().nullish(),
+  project_id: z.string().nullish(),
+  // The page of this result in the Kamai web app (the API layer builds it).
+  app_url: z.string().nullish(),
+  reference_ids: z.record(z.string(), z.string()).nullish(),
 });
 
 // The same projection the geometry page uses, declared here rather than imported from
@@ -300,6 +328,49 @@ export const vocabularySchema = z.looseObject({
   limits: z.record(z.string(), z.unknown()),
 });
 
+// Structured drawing text. Kamai builds both responses with one helper per kind and serves
+// the same shape wherever it is read; these decoders only check what a tool reads,
+// everything else passes through.
+const sheetBox = z.array(z.number()).length(4);
+
+export const sheetWordSchema = z.looseObject({
+  text: z.string(),
+  bbox: sheetBox,
+  source: z.string(),
+  room_id: z.string().nullish(),
+});
+
+export const sheetTextResultSchema = z.looseObject({
+  status: z.string(),
+  total: z.number().nullish(),
+  next_cursor: z.string().nullish(),
+  rooms: z.record(z.string(), z.string()).nullish(),
+  words: z.array(sheetWordSchema),
+  note: z.string().nullish(),
+});
+
+export const printedTableEntrySchema = z.looseObject({
+  id: z.string(),
+  title: z.string().nullish(),
+  source: z.string().nullish(),
+  bbox: sheetBox.nullish(),
+  complete: z.boolean().nullish(),
+  coverage: z.looseObject({ cells_present: z.number().nullish(), cells_total: z.number().nullish() }).nullish(),
+  lossy: z.boolean().nullish(),
+  n_rows: z.number().nullish(),
+  n_cols: z.number().nullish(),
+  chars: z.number().nullish(),
+});
+
+export const printedTablesResultSchema = z.looseObject({
+  status: z.string(),
+  sheets: z.array(z.looseObject({ blueprint_id: z.string(), state: z.string(), note: z.string().nullish() })).nullish(),
+  tables: z.array(printedTableEntrySchema).nullish(),
+  table: z.looseObject({ id: z.string() }).nullish(),
+  next_cursor: z.string().nullish(),
+  note: z.string().nullish(),
+});
+
 export type SelectResult = z.infer<typeof selectResultSchema>;
 export type FindRow = z.infer<typeof findRowSchema>;
 export type AggregateResult = z.infer<typeof aggregateResultSchema>;
@@ -310,6 +381,9 @@ export type ResolveResult = z.infer<typeof resolveResultSchema>;
 export type InventoryResult = z.infer<typeof inventoryResultSchema>;
 export type InventoryBlueprint = z.infer<typeof inventoryBlueprintSchema>;
 export type ScaleResult = z.infer<typeof scaleResultSchema>;
+export type RotationResult = z.infer<typeof rotationResultSchema>;
 export type GeometrySelectResult = z.infer<typeof geometrySelectResultSchema>;
 export type Vocabulary = z.infer<typeof vocabularySchema>;
 export type IdMap = z.infer<typeof idMap>;
+export type SheetTextResult = z.infer<typeof sheetTextResultSchema>;
+export type PrintedTablesResult = z.infer<typeof printedTablesResultSchema>;
